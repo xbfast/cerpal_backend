@@ -1,0 +1,36 @@
+services:
+  db:
+    container_name: cerpal_postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cerpal
+      POSTGRES_PASSWORD: cerpal
+      POSTGRES_DB: cerpal
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cerpal -d cerpal"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    container_name: cerpal_api
+    build: .
+    ports:
+      - "8000:8000"
+    # Carga MAIL_*, LOG_LEVEL, etc. desde `cerpal_backend/.env` en tu máquina.
+    # Las claves en `environment` debajo sustituyen a las del .env (p. ej. DATABASE_URL → db).
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://cerpal:cerpal@db:5432/cerpal
+      JWT_SECRET: ${JWT_SECRET:-dev-cambiar-en-produccion}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

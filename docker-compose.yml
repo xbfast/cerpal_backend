@@ -32,5 +32,19 @@ services:
       db:
         condition: service_healthy
 
+  # Migraciones: `docker compose --profile migrate run --rm migrate`
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://cerpal:cerpal@db:5432/cerpal
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - migrate
+
 volumes:
   postgres_data:

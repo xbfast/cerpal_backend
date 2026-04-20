@@ -3,10 +3,20 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func, text
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+# Tipo nativo en PostgreSQL; el DDL lo crea Alembic (`create_type=False`).
+USER_ROLE_ENUM = PG_ENUM(
+    "cliente",
+    "comercial",
+    "administrador",
+    name="user_role",
+    create_type=False,
+)
 
 
 class AuthAccount(Base):
@@ -37,11 +47,10 @@ class AuthAccount(Base):
     email_verificado: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
-    # Enum en BD: cliente | comercial | administrador (mapear como texto si el tipo es nativo ENUM).
     rol: Mapped[str] = mapped_column(
-        String(32),
+        USER_ROLE_ENUM,
         nullable=False,
-        server_default=text("'cliente'"),
+        server_default=text("'cliente'::user_role"),
         default="cliente",
     )
     # TIMESTAMP sin zona (igual que CREATE TABLE … TIMESTAMP DEFAULT CURRENT_TIMESTAMP)

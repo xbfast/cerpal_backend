@@ -1,6 +1,6 @@
 """Usuario y dirección de prueba para desarrollo (idempotente).
 
-Credenciales (solo desarrollo): email test@cerpal.local, contraseña Test123!
+Credenciales (solo desarrollo): email test@example.com, contraseña Test123!
 
 Revision ID: 002_seed_test_user
 Revises: 001_initial
@@ -18,7 +18,8 @@ down_revision: Union[str, None] = "001_initial"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-_TEST_EMAIL = "test@cerpal.local"
+# example.com es de uso documentación (IANA); email-validator rechaza dominios .local reservados.
+_TEST_EMAIL = "test@example.com"
 
 
 def upgrade() -> None:

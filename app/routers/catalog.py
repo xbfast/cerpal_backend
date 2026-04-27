@@ -150,6 +150,15 @@ WHERE pt.id = :tmpl_id
 ORDER BY pp.default_code, pa.name
 """)
 
+_COLOR_ATTR_NAMES_FOR_TEMPLATE_SQL = text("""
+SELECT DISTINCT pa.name AS attr_name
+FROM product_template_attribute_line ptal
+JOIN product_attribute pa ON pa.id = ptal.attribute_id
+WHERE ptal.template_id = :tmpl_id
+  AND pa.attr_type = 'color'
+ORDER BY pa.name
+""")
+
 _VALUE_SPECS_SQL = text("""
 SELECT DISTINCT ON (pa.name, pav.name)
     pa.name AS attr_name,
@@ -174,6 +183,17 @@ def _opt_str(v: object | None) -> str | None:
         return None
     s = str(v).strip()
     return s if s else None
+
+
+def _fetch_color_attribute_names(db: Session, tmpl_id: int) -> list[str]:
+    try:
+        rows = db.execute(
+            _COLOR_ATTR_NAMES_FOR_TEMPLATE_SQL, {"tmpl_id": tmpl_id}
+        ).fetchall()
+    except ProgrammingError as e:
+        logger.warning("Lista de atributos color omitida: %s", e)
+        return []
+    return [str(r[0]) for r in rows if r and r[0]]
 
 
 def _fetch_attribute_value_specs(db: Session, tmpl_id: int) -> dict[str, dict[str, AttributeValueSpecOut]]:
@@ -396,6 +416,7 @@ def get_catalog_product(catalog: str, slug: str, db: Session = Depends(get_db)):
     color_names = _fetch_color_map(db, [tmpl_id]).get(tmpl_id)
     keys, extra = swatch_keys_from_color_names(color_names)
     attribute_value_specs = _fetch_attribute_value_specs(db, tmpl_id)
+    color_attribute_keys = _fetch_color_attribute_names(db, tmpl_id)
 
     vrows = db.execute(_VARIANT_ROWS_SQL, {"tmpl_id": tmpl_id}).mappings().all()
     by_vid: dict[int, dict[str, object]] = {}
@@ -428,8 +449,7 @@ def get_catalog_product(catalog: str, slug: str, db: Session = Depends(get_db)):
         )
         if raw_hex and is_colorish:
             hx = str(raw_hex).strip()
-            low = hx.lower()
-            if low not in ("#ffffff", "#fff", ""):
+            if hx and hx.lower() not in ("", "transparent", "none"):
                 if vid not in hex_by_vid or hex_by_vid[vid] is None:
                     hex_by_vid[vid] = hx
 
@@ -471,4 +491,5 @@ def get_catalog_product(catalog: str, slug: str, db: Session = Depends(get_db)):
         gallery=None,
         variants=variants,
         attributeValueSpecs=attribute_value_specs,
+        colorAttributeKeys=color_attribute_keys,
     )

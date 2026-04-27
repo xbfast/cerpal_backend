@@ -63,3 +63,5 @@ class CatalogProductDetailOut(CatalogListItemOut):
     attributeValueSpecs: dict[str, dict[str, AttributeValueSpecOut]] = Field(
         default_factory=dict
     )
+    # Nombres de atributo con attr_type = 'color' en este template (p. ej. «M4 Brillo», «Color de Tinta»).
+    colorAttributeKeys: list[str] = Field(default_factory=list)

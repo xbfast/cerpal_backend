@@ -26,6 +26,7 @@ def _configure_logging() -> None:
 
 _configure_logging()
 from app.routers import auth as auth_router
+from app.routers import catalog as catalog_router
 from app.routers import contacts as contacts_router
 from app.routers import direcciones as direcciones_router
 
@@ -51,6 +52,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router.router)
+app.include_router(catalog_router.router)
 app.include_router(contacts_router.router)
 app.include_router(direcciones_router.router)
 

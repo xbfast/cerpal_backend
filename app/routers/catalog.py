@@ -21,6 +21,7 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.catalog_schemas import (
+    AttributeValueSpecOut,
     CatalogListItemOut,
     CatalogListPageOut,
     CatalogProductDetailOut,
@@ -148,6 +149,55 @@ WHERE pt.id = :tmpl_id
   AND COALESCE(pp.active, TRUE)
 ORDER BY pp.default_code, pa.name
 """)
+
+_VALUE_SPECS_SQL = text("""
+SELECT DISTINCT ON (pa.name, pav.name)
+    pa.name AS attr_name,
+    pav.name AS val_name,
+    pav.color_html,
+    pav.pantone,
+    pav.cmyk,
+    pav.ral
+FROM product_product pp
+JOIN product_variant_attribute_value pvav ON pvav.product_id = pp.id
+JOIN product_template_attribute_line ptal ON ptal.id = pvav.attribute_line_id
+JOIN product_attribute pa ON pa.id = ptal.attribute_id
+JOIN product_attribute_value pav ON pav.id = pvav.attribute_value_id
+WHERE pp.template_id = :tmpl_id
+  AND COALESCE(pp.active, TRUE)
+ORDER BY pa.name, pav.name, pp.id
+""")
+
+
+def _opt_str(v: object | None) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s if s else None
+
+
+def _fetch_attribute_value_specs(db: Session, tmpl_id: int) -> dict[str, dict[str, AttributeValueSpecOut]]:
+    try:
+        rows = db.execute(_VALUE_SPECS_SQL, {"tmpl_id": tmpl_id}).mappings().all()
+    except ProgrammingError as e:
+        logger.warning("Specs de valores de atributo omitidos: %s", e)
+        return {}
+    out: dict[str, dict[str, AttributeValueSpecOut]] = {}
+    for r in rows:
+        an = _opt_str(r.get("attr_name"))
+        vn = _opt_str(r.get("val_name"))
+        if not an or not vn:
+            continue
+        spec = AttributeValueSpecOut(
+            hex=_opt_str(r.get("color_html")),
+            pantone=_opt_str(r.get("pantone")),
+            cmyk=_opt_str(r.get("cmyk")),
+            ral=_opt_str(r.get("ral")),
+        )
+        if an not in out:
+            out[an] = {}
+        out[an][vn] = spec
+    return out
 
 
 def _badge_for_catalog(catalog: str) -> str:
@@ -345,6 +395,7 @@ def get_catalog_product(catalog: str, slug: str, db: Session = Depends(get_db)):
     title = str(row["name"] or default_code)
     color_names = _fetch_color_map(db, [tmpl_id]).get(tmpl_id)
     keys, extra = swatch_keys_from_color_names(color_names)
+    attribute_value_specs = _fetch_attribute_value_specs(db, tmpl_id)
 
     vrows = db.execute(_VARIANT_ROWS_SQL, {"tmpl_id": tmpl_id}).mappings().all()
     by_vid: dict[int, dict[str, object]] = {}
@@ -419,4 +470,5 @@ def get_catalog_product(catalog: str, slug: str, db: Session = Depends(get_db)):
         ),
         gallery=None,
         variants=variants,
+        attributeValueSpecs=attribute_value_specs,
     )

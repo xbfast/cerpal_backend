@@ -3,6 +3,17 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class AttributeValueSpecOut(BaseModel):
+    """Metadatos del valor en BD (`product_attribute_value`) para la ficha de color."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    hex: str | None = Field(None, description="color_html")
+    pantone: str | None = None
+    cmyk: str | None = None
+    ral: str | None = None
+
+
 class CatalogVariantOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,3 +59,7 @@ class CatalogProductDetailOut(CatalogListItemOut):
     cartaColores: str | None = None
     gallery: list[str] | None = None
     variants: list[CatalogVariantOut] = Field(default_factory=list)
+    # nombre atributo → nombre valor mostrado → specs (hex / pantone / cmyk / ral)
+    attributeValueSpecs: dict[str, dict[str, AttributeValueSpecOut]] = Field(
+        default_factory=dict
+    )

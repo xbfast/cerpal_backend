@@ -150,12 +150,11 @@ WHERE pt.id = :tmpl_id
 ORDER BY pp.default_code, pa.name
 """)
 
-_COLOR_ATTR_NAMES_FOR_TEMPLATE_SQL = text("""
-SELECT DISTINCT pa.name AS attr_name
+_TEMPLATE_ATTR_TYPES_SQL = text("""
+SELECT DISTINCT pa.name AS attr_name, pa.attr_type
 FROM product_template_attribute_line ptal
 JOIN product_attribute pa ON pa.id = ptal.attribute_id
 WHERE ptal.template_id = :tmpl_id
-  AND pa.attr_type = 'color'
 ORDER BY pa.name
 """)
 
@@ -185,15 +184,27 @@ def _opt_str(v: object | None) -> str | None:
     return s if s else None
 
 
-def _fetch_color_attribute_names(db: Session, tmpl_id: int) -> list[str]:
+def _fetch_template_attribute_types(
+    db: Session, tmpl_id: int
+) -> tuple[dict[str, str], list[str]]:
+    """{ nombre_atributo: attr_type }, y lista de nombres con tipo color."""
     try:
         rows = db.execute(
-            _COLOR_ATTR_NAMES_FOR_TEMPLATE_SQL, {"tmpl_id": tmpl_id}
-        ).fetchall()
+            _TEMPLATE_ATTR_TYPES_SQL, {"tmpl_id": tmpl_id}
+        ).mappings().all()
     except ProgrammingError as e:
-        logger.warning("Lista de atributos color omitida: %s", e)
-        return []
-    return [str(r[0]) for r in rows if r and r[0]]
+        logger.warning("Tipos de atributo por template omitidos: %s", e)
+        return {}, []
+    types: dict[str, str] = {}
+    for r in rows:
+        an = _opt_str(r.get("attr_name"))
+        if not an:
+            continue
+        raw = r.get("attr_type")
+        typ = str(raw).strip().lower() if raw is not None else "select"
+        types[an] = typ if typ in ("color", "select") else "select"
+    color_keys = [k for k, v in types.items() if v == "color"]
+    return types, color_keys
 
 
 def _fetch_attribute_value_specs(db: Session, tmpl_id: int) -> dict[str, dict[str, AttributeValueSpecOut]]:
@@ -416,7 +427,7 @@ def get_catalog_product(catalog: str, slug: str, db: Session = Depends(get_db)):
     color_names = _fetch_color_map(db, [tmpl_id]).get(tmpl_id)
     keys, extra = swatch_keys_from_color_names(color_names)
     attribute_value_specs = _fetch_attribute_value_specs(db, tmpl_id)
-    color_attribute_keys = _fetch_color_attribute_names(db, tmpl_id)
+    attribute_types, color_attribute_keys = _fetch_template_attribute_types(db, tmpl_id)
 
     vrows = db.execute(_VARIANT_ROWS_SQL, {"tmpl_id": tmpl_id}).mappings().all()
     by_vid: dict[int, dict[str, object]] = {}
@@ -491,5 +502,6 @@ def get_catalog_product(catalog: str, slug: str, db: Session = Depends(get_db)):
         gallery=None,
         variants=variants,
         attributeValueSpecs=attribute_value_specs,
+        attributeTypes=attribute_types,
         colorAttributeKeys=color_attribute_keys,
     )

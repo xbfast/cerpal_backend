@@ -313,11 +313,28 @@ def migrate_products(df_precio, df_attrs):
         if clean(r.get("galeria")):
             gal_map[r["code"]] = clean(r["galeria"])
 
-    # Un template por cada valor único de "padre"
+    # Un template por cada valor único de "padre".
+    # Ordenar para que .first() prefiera filas con descripción no vacía (evita NOT NULL en name).
+    dfw = df_precio.copy()
+    dfw["_name_ok"] = dfw["name"].map(lambda x: 0 if clean(x) else 1)
     templates = (
-        df_precio.groupby("padre", as_index=False)
+        dfw.sort_values(["padre", "_name_ok", "code"])
+        .groupby("padre", as_index=False)
         .first()
         .rename(columns={"padre": "tmpl_code", "name": "tmpl_name"})
+        .drop(columns=["_name_ok"], errors="ignore")
+    )
+
+    def _non_empty_name(name, code_fallback: str) -> str:
+        n = clean(name)
+        if n:
+            return n[:255]
+        c = str(code_fallback).strip()
+        return (f"Artículo {c}" if c else "Sin descripción")[:255]
+
+    templates["tmpl_name"] = templates.apply(
+        lambda r: _non_empty_name(r["tmpl_name"], r["tmpl_code"]),
+        axis=1,
     )
 
     with get_conn() as conn:
@@ -348,6 +365,7 @@ def migrate_products(df_precio, df_attrs):
             precio  = float(r["list_price"]) if pd.notna(r["list_price"]) else None
             imagen  = img_map.get(r["code"])
             galeria = gal_map.get(r["code"])
+            var_name = _non_empty_name(r.get("name"), r["code"])
             cur.execute("""
                 INSERT INTO product_product
                     (template_id, default_code, name, list_price, active, image_url, gallery_jsonb)
@@ -358,7 +376,7 @@ def migrate_products(df_precio, df_attrs):
                     active        = EXCLUDED.active,
                     image_url     = EXCLUDED.image_url,
                     gallery_jsonb = EXCLUDED.gallery_jsonb
-            """, (tmpl_id, r["code"], r["name"], precio, bool(r["active"]), imagen, galeria))
+            """, (tmpl_id, r["code"], var_name, precio, bool(r["active"]), imagen, galeria))
             ok += 1
 
         conn.commit()

@@ -5,8 +5,8 @@ Esquema alineado con `migracion_catalogo.py` / Odoo-like:
 - product_variant_attribute_value (product_id, attribute_line_id, attribute_value_id)
 - product_attribute.attr_type ('select' | 'color'), product_attribute_value.color_html
 
-«Rotulación» = plantillas en categoría raíz 1 o subcategorías (parent_id = 1).
-«Impresión» = el resto (incl. sin categoría).
+«Rotulación» = plantillas en categoría raíz 1 o subcategorías (vía product_template_category).
+«Impresión» = plantillas en categoría raíz 2 o subcategorías.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from app.catalog_schemas import (
     CatalogListItemOut,
     CatalogListPageOut,
     CatalogProductDetailOut,
+    CatalogSearchResultOut,
     CatalogVariantOut,
 )
 from app.catalog_utils import (
@@ -40,18 +41,100 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
 
-# Árbol comercial «Rotulación» en product_category (seed: id=1 + hijas con parent_id=1).
-_ROTULACION_SQL = """
-pt.category_id IN (
-    SELECT pc.id FROM product_category pc
-    WHERE pc.id = 1 OR pc.parent_id = 1
+
+def _category_branch_sql(root_id: int) -> str:
+    root_code = str(root_id)
+    return f"""
+(
+    EXISTS (
+        SELECT 1
+        FROM product_template_category ptc
+        JOIN product_category pc ON pc.id = ptc.category_id
+        WHERE ptc.template_id = pt.id
+          AND (
+            pc.category_code = '{root_code}'
+            OR pc.category_code LIKE '{root_code}.%'
+          )
+    )
+)
+"""
+
+
+# Se publican todos los productos salvo las ramas descartadas:
+# 3 (Tintas), 4 (Maquinaria), 5 (Sublimación/Textil) y 6 (Accesorios).
+_EXCLUDED_CATALOG_SQL = f"""
+(
+    {_category_branch_sql(3).strip()}
+    OR {_category_branch_sql(4).strip()}
+    OR {_category_branch_sql(5).strip()}
+    OR {_category_branch_sql(6).strip()}
+)
+"""
+
+_PRINT_MATERIAL_KIND_SQL = """
+(
+    EXISTS (
+        SELECT 1
+        FROM product_template_attribute_line ptal_imp
+        JOIN product_attribute pa_imp ON pa_imp.id = ptal_imp.attribute_id
+        WHERE ptal_imp.template_id = pt.id
+          AND (
+            lower(pa_imp.name) LIKE '%ancho%bobina%'
+            OR lower(pa_imp.name) LIKE '%tipo de vinilo%'
+            OR lower(pa_imp.name) LIKE '%tipo de laminado%'
+            OR lower(pa_imp.name) LIKE '%tipo de adhesivo%'
+            OR lower(pa_imp.name) LIKE '%aplicación%'
+            OR lower(pa_imp.name) LIKE '%aplicacion%'
+            OR lower(pa_imp.name) LIKE '%duración%'
+            OR lower(pa_imp.name) LIKE '%duracion%'
+            OR lower(pa_imp.name) LIKE '%acabado%'
+          )
+    )
+)
+"""
+
+_ROTULACION_KIND_SQL = f"""
+(
+    {_category_branch_sql(1).strip()}
+    OR EXISTS (
+        SELECT 1
+        FROM product_template_attribute_line ptal_rot
+        JOIN product_attribute pa_rot ON pa_rot.id = ptal_rot.attribute_id
+        WHERE ptal_rot.template_id = pt.id
+          AND lower(pa_rot.name) LIKE '%rotulación%'
+    )
+)
+"""
+
+_IMPRESION_KIND_SQL = f"""
+(
+    {_category_branch_sql(2).strip()}
+    OR {_PRINT_MATERIAL_KIND_SQL.strip()}
+)
+"""
+
+_PUBLIC_CATALOG_SQL = f"""
+(
+    NOT ({_EXCLUDED_CATALOG_SQL.strip()})
+    AND (
+        {_ROTULACION_KIND_SQL.strip()}
+        OR {_IMPRESION_KIND_SQL.strip()}
+    )
+)
+"""
+
+_ROTULACION_SQL = f"""
+(
+    {_PUBLIC_CATALOG_SQL.strip()}
+    AND {_ROTULACION_KIND_SQL.strip()}
 )
 """
 
 _IMPRESION_SQL = f"""
 (
-    pt.category_id IS NULL
-    OR NOT ({_ROTULACION_SQL.strip()})
+    {_PUBLIC_CATALOG_SQL.strip()}
+    AND NOT ({_ROTULACION_KIND_SQL.strip()})
+    AND {_IMPRESION_KIND_SQL.strip()}
 )
 """
 
@@ -59,6 +142,7 @@ _COUNT_LIST_SQL = text(f"""
 SELECT COUNT(*)::int AS n
 FROM product_template pt
 WHERE COALESCE(pt.active, TRUE)
+  AND pt.default_code ~ '^A'
   AND (
     (NOT :for_rotulacion AND {_IMPRESION_SQL})
     OR (:for_rotulacion AND {_ROTULACION_SQL})
@@ -92,6 +176,8 @@ SELECT
     pt.id,
     pt.default_code,
     pt.name,
+    price_info.list_price,
+    price_info.image_url,
     (
         SELECT coalesce(
             array_agg(sub.name ORDER BY sub.name),
@@ -109,7 +195,16 @@ SELECT
         ) AS sub(name)
     ) AS color_names
 FROM product_template pt
+LEFT JOIN LATERAL (
+    SELECT pp.list_price, pp.image_url, pp.gallery_jsonb
+    FROM product_product pp
+    WHERE pp.template_id = pt.id
+      AND COALESCE(pp.active, TRUE)
+    ORDER BY pp.list_price NULLS LAST, pp.default_code
+    LIMIT 1
+) price_info ON TRUE
 WHERE COALESCE(pt.active, TRUE)
+  AND pt.default_code ~ '^A'
   AND (
     (NOT :for_rotulacion AND {_IMPRESION_SQL})
     OR (:for_rotulacion AND {_ROTULACION_SQL})
@@ -119,9 +214,25 @@ LIMIT :limit OFFSET :offset
 """)
 
 _TEMPLATE_BY_SLUG_SQL = text(f"""
-SELECT pt.id, pt.default_code, pt.name, pt.active
+SELECT
+    pt.id,
+    pt.default_code,
+    pt.name,
+    pt.active,
+    price_info.list_price,
+    price_info.image_url,
+    price_info.gallery_jsonb
 FROM product_template pt
+LEFT JOIN LATERAL (
+    SELECT pp.list_price, pp.image_url, pp.gallery_jsonb
+    FROM product_product pp
+    WHERE pp.template_id = pt.id
+      AND COALESCE(pp.active, TRUE)
+    ORDER BY pp.list_price NULLS LAST, pp.default_code
+    LIMIT 1
+) price_info ON TRUE
 WHERE COALESCE(pt.active, TRUE)
+  AND pt.default_code ~ '^A'
   AND lower(regexp_replace(trim(pt.default_code), '[^a-zA-Z0-9]+', '-', 'g')) = :slug
   AND (
     (NOT :for_rotulacion AND {_IMPRESION_SQL})
@@ -135,6 +246,9 @@ SELECT
     pp.id AS variant_id,
     pp.default_code AS variant_code,
     pp.name AS variant_name,
+    pp.list_price AS variant_list_price,
+    pp.image_url AS variant_image_url,
+    pp.gallery_jsonb AS variant_gallery_jsonb,
     pa.name AS attribute_name,
     pa.attr_type AS attr_display_type,
     pav.name AS attribute_value,
@@ -176,12 +290,112 @@ WHERE pp.template_id = :tmpl_id
 ORDER BY pa.name, pav.name, pp.id
 """)
 
+_SEARCH_SQL = text(f"""
+SELECT
+    pt.id AS template_id,
+    pt.default_code AS template_code,
+    pt.name AS template_name,
+    pp.id AS variant_id,
+    pp.default_code AS variant_code,
+    pp.name AS variant_name,
+    pp.list_price AS variant_list_price,
+    pp.image_url AS variant_image_url,
+    pp.gallery_jsonb AS variant_gallery_jsonb,
+    attrs.properties AS properties,
+    CASE WHEN {_ROTULACION_SQL} THEN 'rotulacion' ELSE 'impresion' END AS catalog
+FROM product_product pp
+JOIN product_template pt ON pt.id = pp.template_id
+LEFT JOIN LATERAL (
+    SELECT COALESCE(jsonb_object_agg(pa.name, pav.name), '{{}}'::jsonb) AS properties
+    FROM product_variant_attribute_value pvav
+    JOIN product_template_attribute_line ptal ON ptal.id = pvav.attribute_line_id
+    JOIN product_attribute pa ON pa.id = ptal.attribute_id
+    JOIN product_attribute_value pav ON pav.id = pvav.attribute_value_id
+    WHERE pvav.product_id = pp.id
+) attrs ON TRUE
+WHERE COALESCE(pt.active, TRUE)
+  AND COALESCE(pp.active, TRUE)
+  AND pt.default_code ~ '^A'
+  AND {_PUBLIC_CATALOG_SQL}
+  AND (
+    pp.default_code ILIKE :q_like
+    OR pt.default_code ILIKE :q_like
+    OR pp.name ILIKE :q_like
+    OR pt.name ILIKE :q_like
+    OR EXISTS (
+        SELECT 1
+        FROM product_variant_attribute_value pvav_s
+        JOIN product_template_attribute_line ptal_s ON ptal_s.id = pvav_s.attribute_line_id
+        JOIN product_attribute pa_s ON pa_s.id = ptal_s.attribute_id
+        JOIN product_attribute_value pav_s ON pav_s.id = pvav_s.attribute_value_id
+        WHERE pvav_s.product_id = pp.id
+          AND (pa_s.name ILIKE :q_like OR pav_s.name ILIKE :q_like)
+    )
+  )
+  AND NOT (
+    lower(pt.default_code) = lower(:q_exact)
+    AND lower(pp.default_code) <> lower(pt.default_code)
+    AND EXISTS (
+        SELECT 1
+        FROM product_product pp_exact
+        WHERE pp_exact.template_id = pt.id
+          AND COALESCE(pp_exact.active, TRUE)
+          AND lower(pp_exact.default_code) = lower(pt.default_code)
+    )
+  )
+ORDER BY
+    CASE
+        WHEN lower(pp.default_code) = lower(:q_exact) THEN 0
+        WHEN lower(pt.default_code) = lower(:q_exact) THEN 1
+        WHEN pp.default_code ILIKE :q_prefix THEN 2
+        WHEN pt.default_code ILIKE :q_prefix THEN 3
+        WHEN pp.default_code ILIKE :q_like THEN 4
+        ELSE 5
+    END,
+    pp.default_code
+LIMIT :limit
+""")
+
 
 def _opt_str(v: object | None) -> str | None:
     if v is None:
         return None
     s = str(v).strip()
     return s if s else None
+
+
+def _valid_media_str(v: object | None) -> str | None:
+    s = _opt_str(v)
+    if s is None or s.lower() in ("nan", "none", "null"):
+        return None
+    return s
+
+
+def _gallery_list(v: object | None) -> list[str] | None:
+    if v is None:
+        return None
+    candidates: list[object]
+    if isinstance(v, list | tuple):
+        candidates = list(v)
+    elif isinstance(v, dict):
+        raw = v.get("images") or v.get("gallery") or v.get("items") or []
+        candidates = list(raw) if isinstance(raw, list | tuple) else [raw]
+    else:
+        candidates = [v]
+    out: list[str] = []
+    for item in candidates:
+        s = _valid_media_str(item)
+        if s and s not in out:
+            out.append(s)
+    return out or None
+
+
+def _image_or_placeholder(image: object | None, gallery: object | None = None) -> str:
+    return (
+        _valid_media_str(image)
+        or (_gallery_list(gallery) or [None])[0]
+        or PLACEHOLDER_PRODUCT_IMAGE
+    )
 
 
 def _fetch_template_attribute_types(
@@ -257,7 +471,10 @@ def _row_to_list_item(
         title=title,
         description=truncate_text(title, 220),
         price=format_price_eur(row.get("list_price")),  # type: ignore[arg-type]
-        image=PLACEHOLDER_PRODUCT_IMAGE,
+        image=_image_or_placeholder(
+            row.get("image_url"),
+            row.get("gallery_jsonb"),
+        ),
         badge=_badge_for_catalog(catalog),
         reference=default_code,
         swatchKeys=keys,
@@ -301,9 +518,18 @@ def catalog_featured(
     half = max(1, limit // 2)
     rest = limit - half
     _feat_sql = text(f"""
-SELECT pt.id, pt.default_code, pt.name
+SELECT pt.id, pt.default_code, pt.name, price_info.list_price, price_info.image_url
 FROM product_template pt
+LEFT JOIN LATERAL (
+    SELECT pp.list_price, pp.image_url, pp.gallery_jsonb
+    FROM product_product pp
+    WHERE pp.template_id = pt.id
+      AND COALESCE(pp.active, TRUE)
+    ORDER BY pp.list_price NULLS LAST, pp.default_code
+    LIMIT 1
+) price_info ON TRUE
 WHERE COALESCE(pt.active, TRUE)
+  AND pt.default_code ~ '^A'
   AND (
     (NOT :for_rotulacion AND {_IMPRESION_SQL})
     OR (:for_rotulacion AND {_ROTULACION_SQL})
@@ -337,6 +563,62 @@ LIMIT :lim
         _row_to_list_item(r, cat, colors.get(int(r["id"])))
         for cat, r in combined[:limit]
     ]
+
+
+@router.get("/search", response_model=list[CatalogSearchResultOut])
+def search_catalog(
+    q: str = Query(..., min_length=2, max_length=80),
+    limit: int = Query(200, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """Búsqueda global por referencia, nombre o propiedades de variante."""
+    needle = q.strip()
+    if len(needle) < 2:
+        return []
+    try:
+        rows = db.execute(
+            _SEARCH_SQL,
+            {
+                "q_like": f"%{needle}%",
+                "q_prefix": f"{needle}%",
+                "q_exact": needle,
+                "limit": limit,
+            },
+        ).mappings().all()
+    except ProgrammingError as e:
+        logger.exception("Búsqueda catálogo: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Búsqueda de catálogo no disponible.",
+        ) from e
+
+    out: list[CatalogSearchResultOut] = []
+    for r in rows:
+        template_code = str(r["template_code"])
+        title = str(r.get("template_name") or template_code)
+        raw_props = r.get("properties") or {}
+        properties = {
+            str(k): str(v)
+            for k, v in dict(raw_props).items()
+            if k is not None and v is not None and str(v).strip()
+        }
+        out.append(
+            CatalogSearchResultOut(
+                catalog=str(r["catalog"]),  # type: ignore[arg-type]
+                slug=slug_from_default_code(template_code),
+                title=title,
+                reference=template_code,
+                variantReference=str(r["variant_code"]),
+                variantName=_opt_str(r.get("variant_name")),
+                price=format_price_eur(r.get("variant_list_price")),  # type: ignore[arg-type]
+                image=_image_or_placeholder(
+                    r.get("variant_image_url"),
+                    r.get("variant_gallery_jsonb"),
+                ),
+                properties=properties,
+            )
+        )
+    return out
 
 
 @router.get("/{catalog}", response_model=CatalogListPageOut)
@@ -442,7 +724,7 @@ def get_catalog_product(catalog: str, slug: str, db: Session = Depends(get_db)):
                 "id": vid,
                 "default_code": str(vr["variant_code"]),
                 "name": vr["variant_name"],
-                "list_price": 0.0,
+                "list_price": vr.get("variant_list_price") or 0.0,
                 "integrable": is_rotulacion_catalog,
             }
         an = vr.get("attribute_name")
@@ -488,6 +770,7 @@ def get_catalog_product(catalog: str, slug: str, db: Session = Depends(get_db)):
     )
 
     base_item = _row_to_list_item(row, catalog, color_names)
+    gallery = _gallery_list(row.get("gallery_jsonb"))
     return CatalogProductDetailOut(
         **base_item.model_dump(),
         descriptionDetail=desc_detail,
@@ -499,7 +782,7 @@ def get_catalog_product(catalog: str, slug: str, db: Session = Depends(get_db)):
             if catalog == "rotulacion"
             else None
         ),
-        gallery=None,
+        gallery=gallery,
         variants=variants,
         attributeValueSpecs=attribute_value_specs,
         attributeTypes=attribute_types,

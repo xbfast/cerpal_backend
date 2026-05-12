@@ -52,6 +52,20 @@ class CatalogListPageOut(BaseModel):
     limit: int
 
 
+class CatalogSearchResultOut(BaseModel):
+    """Resultado de búsqueda global por referencia/atributos de variante."""
+
+    catalog: Literal["impresion", "rotulacion"]
+    slug: str
+    title: str
+    reference: str
+    variantReference: str
+    variantName: str | None = None
+    price: str
+    image: str
+    properties: dict[str, str] = Field(default_factory=dict)
+
+
 class CatalogProductDetailOut(CatalogListItemOut):
     descriptionDetail: str | None = None
     characteristics: list[str] = Field(default_factory=list)

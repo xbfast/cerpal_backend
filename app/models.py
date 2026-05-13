@@ -2,8 +2,9 @@ import uuid
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, SmallInteger, String, Text, func, text
 from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -73,6 +74,12 @@ class AuthAccount(Base):
     direcciones: Mapped[list["Direccion"]] = relationship(
         "Direccion",
         back_populates="account",
+        cascade="all, delete-orphan",
+    )
+    cart: Mapped["Cart | None"] = relationship(
+        "Cart",
+        back_populates="account",
+        uselist=False,
         cascade="all, delete-orphan",
     )
 
@@ -148,3 +155,53 @@ class Direccion(Base):
     account: Mapped["AuthAccount"] = relationship(
         "AuthAccount", back_populates="direcciones"
     )
+
+
+class Cart(Base):
+    """Un carrito por cuenta (`auth_id` único)."""
+
+    __tablename__ = "cart"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    auth_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("auth.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now()
+    )
+
+    account: Mapped["AuthAccount"] = relationship("AuthAccount", back_populates="cart")
+    lines: Mapped[list["CartLine"]] = relationship(
+        "CartLine",
+        back_populates="cart",
+        cascade="all, delete-orphan",
+        order_by="CartLine.line_index",
+    )
+
+
+class CartLine(Base):
+    """Línea de carrito: `id` coincide con el UUID de línea del cliente."""
+
+    __tablename__ = "cart_line"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    cart_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("cart.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    line_index: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    line_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    cart: Mapped["Cart"] = relationship("Cart", back_populates="lines")

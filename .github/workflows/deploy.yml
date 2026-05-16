@@ -5,8 +5,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      run_migrate:
+        description: Ejecutar alembic upgrade head en el servidor
+        type: boolean
+        default: false
 
-# Evita el warning de Node 20 en checkout/setup-python (runner → Node 24)
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -27,9 +31,7 @@ jobs:
           pip install pytest httpx
 
       - name: Run tests
-        run: |
-          pytest -v
-        continue-on-error: true
+        run: pytest -v || true
 
   deploy:
     needs: test
@@ -41,14 +43,23 @@ jobs:
         env:
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          if printf '%s' "$COMMIT_MESSAGE" | grep -qF '[migrate]'; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
+          run_migrate=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.run_migrate }}" = "true" ]; then
+            run_migrate=true
+          elif printf '%s' "$COMMIT_MESSAGE" | grep -qF '[migrate]'; then
+            run_migrate=true
           fi
+          if [ "$run_migrate" = "true" ]; then
+            echo "run=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=0" >> "$GITHUB_OUTPUT"
+          fi
+          echo "migrate_flag=$run_migrate"
 
       - name: SSH and deploy
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          RUN_MIGRATE: ${{ steps.migrate.outputs.run }}
 
         with:
           host: ${{ secrets.DROPLET_HOST }}
@@ -56,19 +67,22 @@ jobs:
           key: ${{ secrets.DROPLET_SSH_KEY }}
           port: 22
           script_stop: true
+          envs: RUN_MIGRATE
+          envs_format: "RUN_MIGRATE"
 
           script: |
-            set -e
-
+            # Sin set -e: con set -e, un if [ false = true ] puede cortar el script en dash/sh
             echo "Starting deployment..."
+            echo "RUN_MIGRATE=${RUN_MIGRATE:-0}"
 
-            cd /home/app/cerpal_backend
+            cd /home/app/cerpal_backend || exit 1
 
             echo "Fetching latest code..."
             git fetch origin main
             git reset --hard origin/main
 
             echo "Activating virtual environment..."
+            # shellcheck disable=SC1091
             source venv/bin/activate
 
             echo "Installing dependencies..."
@@ -76,11 +90,11 @@ jobs:
 
             echo "Deploy SHA: ${{ github.sha }}"
 
-            if [ "${{ steps.migrate.outputs.run }}" = "true" ]; then
+            if [ "${RUN_MIGRATE:-0}" = "1" ]; then
               echo "Running Alembic migrations..."
               alembic upgrade head
             else
-              echo "Skipping migrations (añade [migrate] al mensaje del commit para migrar)."
+              echo "Skipping migrations (commit con [migrate] o workflow_dispatch run_migrate=true)."
             fi
 
             echo "Restarting cerpal service..."

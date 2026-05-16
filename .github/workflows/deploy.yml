@@ -36,6 +36,6 @@ jobs:
             git reset --hard origin/main
             source venv/bin/activate
             pip install -r requirements.txt
-            sudo systemctl restart fastapi
+            sudo systemctl start cerpal
             sleep 2
-            sudo systemctl status fastapi --no-pager
+            sudo systemctl status cerpal --no-pager

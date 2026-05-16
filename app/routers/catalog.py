@@ -12,6 +12,7 @@ Esquema alineado con `migracion_catalogo.py` / Odoo-like:
 from __future__ import annotations
 
 import logging
+import random
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 
@@ -525,17 +526,39 @@ def _fetch_color_map(db: Session, tmpl_ids: Sequence[int]) -> dict[int, list[str
     return out
 
 
-@router.get("/featured", response_model=list[CatalogListItemOut])
-def catalog_featured(
-    limit: int = Query(8, ge=1, le=32),
-    db: Session = Depends(get_db),
-):
-    """Mezcla breve impresión + rotulación para home (si hay datos en ambos)."""
-    half = max(1, limit // 2)
-    rest = limit - half
-    _feat_sql = text(f"""
-SELECT pt.id, pt.default_code, pt.name, price_info.list_price, price_info.image_url, price_info.description_short
-FROM product_template pt
+_FEATURED_RANDOM_SQL = text(f"""
+WITH combined AS (
+    (
+        SELECT pt.id, 'impresion'::text AS catalog
+        FROM product_template pt
+        WHERE COALESCE(pt.active, TRUE)
+          AND pt.default_code ~ '^A'
+          AND ({_IMPRESION_SQL})
+        ORDER BY random()
+        LIMIT :n_imp
+    )
+    UNION ALL
+    (
+        SELECT pt.id, 'rotulacion'::text AS catalog
+        FROM product_template pt
+        WHERE COALESCE(pt.active, TRUE)
+          AND pt.default_code ~ '^A'
+          AND ({_ROTULACION_SQL})
+        ORDER BY random()
+        LIMIT :n_rot
+    )
+)
+SELECT
+    c.catalog,
+    pt.id,
+    pt.default_code,
+    pt.name,
+    price_info.list_price,
+    price_info.image_url,
+    price_info.gallery_jsonb,
+    price_info.description_short
+FROM combined c
+JOIN product_template pt ON pt.id = c.id
 LEFT JOIN LATERAL (
     SELECT pp.list_price, pp.image_url, pp.gallery_jsonb, pp.description_short
     FROM product_product pp
@@ -547,23 +570,25 @@ LEFT JOIN LATERAL (
         pp.default_code
     LIMIT 1
 ) price_info ON TRUE
-WHERE COALESCE(pt.active, TRUE)
-  AND pt.default_code ~ '^A'
-  AND (
-    (NOT :for_rotulacion AND {_IMPRESION_SQL})
-    OR (:for_rotulacion AND {_ROTULACION_SQL})
-  )
-ORDER BY pt.id
-LIMIT :lim
 """)
+
+
+@router.get("/featured", response_model=list[CatalogListItemOut])
+def catalog_featured(
+    limit: int = Query(8, ge=1, le=32),
+    db: Session = Depends(get_db),
+):
+    """Destacados aleatorios para home: mezcla impresión + rotulación (consulta acotada)."""
+    if limit >= 2:
+        n_imp = random.randint(1, limit - 1)
+        n_rot = limit - n_imp
+    else:
+        n_imp, n_rot = limit, 0
+
     try:
-        rows_imp = db.execute(
-            _feat_sql,
-            {"for_rotulacion": False, "lim": half},
-        ).mappings().all()
-        rows_rot = db.execute(
-            _feat_sql,
-            {"for_rotulacion": True, "lim": rest},
+        rows = db.execute(
+            _FEATURED_RANDOM_SQL,
+            {"n_imp": n_imp, "n_rot": n_rot},
         ).mappings().all()
     except ProgrammingError as e:
         logger.exception("Catálogo featured: error de consulta %s", e)
@@ -572,15 +597,17 @@ LIMIT :lim
             detail="Catálogo no disponible (error al leer la base de datos).",
         ) from e
 
-    combined: list[tuple[str, Mapping[str, object]]] = [
-        *(("impresion", r) for r in rows_imp),
-        *(("rotulacion", r) for r in rows_rot),
-    ]
-    ids = [int(r["id"]) for _, r in combined]
+    if not rows:
+        return []
+
+    shuffled = list(rows)
+    random.shuffle(shuffled)
+
+    ids = [int(r["id"]) for r in shuffled]
     colors = _fetch_color_map(db, ids)
     return [
-        _row_to_list_item(r, cat, colors.get(int(r["id"])))
-        for cat, r in combined[:limit]
+        _row_to_list_item(r, str(r["catalog"]), colors.get(int(r["id"])))
+        for r in shuffled
     ]
 
 

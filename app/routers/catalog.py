@@ -686,7 +686,7 @@ def search_catalog(
 @router.get("/{catalog}", response_model=CatalogListPageOut)
 def list_catalog(
     catalog: str,
-    limit: int = Query(25, ge=1, le=100),
+    limit: int = Query(12, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):

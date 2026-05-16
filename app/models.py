@@ -1,14 +1,16 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, SmallInteger, String, Text, func, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, func, text
 from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.order_enums import EstadoEnvio, EstadoPago, MetodoPago
 
 # Tipo nativo en PostgreSQL; el DDL lo crea Alembic (`create_type=False`).
 USER_ROLE_ENUM = PG_ENUM(
@@ -16,6 +18,33 @@ USER_ROLE_ENUM = PG_ENUM(
     "comercial",
     "administrador",
     name="user_role",
+    create_type=False,
+)
+
+METODO_PAGO_ENUM = PG_ENUM(
+    MetodoPago.CARD,
+    MetodoPago.TRANSFER,
+    name="order_payment_method",
+    create_type=False,
+)
+
+ESTADO_PAGO_ENUM = PG_ENUM(
+    EstadoPago.PENDIENTE,
+    EstadoPago.PAGADO,
+    EstadoPago.FALLIDO,
+    EstadoPago.REEMBOLSADO,
+    EstadoPago.CANCELADO,
+    name="order_payment_status",
+    create_type=False,
+)
+
+ESTADO_ENVIO_ENUM = PG_ENUM(
+    EstadoEnvio.PENDIENTE,
+    EstadoEnvio.PREPARANDO,
+    EstadoEnvio.ENVIADO,
+    EstadoEnvio.ENTREGADO,
+    EstadoEnvio.CANCELADO,
+    name="order_shipping_status",
     create_type=False,
 )
 
@@ -81,6 +110,10 @@ class AuthAccount(Base):
         back_populates="account",
         uselist=False,
         cascade="all, delete-orphan",
+    )
+    pedidos: Mapped[list["Pedido"]] = relationship(
+        "Pedido",
+        back_populates="account",
     )
 
 
@@ -155,6 +188,106 @@ class Direccion(Base):
     account: Mapped["AuthAccount"] = relationship(
         "AuthAccount", back_populates="direcciones"
     )
+    pedidos: Mapped[list["Pedido"]] = relationship("Pedido", back_populates="direccion")
+
+
+class PedidoTicketSeq(Base):
+    """Contador anual para `ticket_number` (CERP-YYYY-NNNNNN)."""
+
+    __tablename__ = "pedido_ticket_seq"
+
+    year: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    last_number: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+
+
+class Pedido(Base):
+    """Pedido confirmado (snapshot de carrito + dirección + totales)."""
+
+    __tablename__ = "pedido"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    ticket_number: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    auth_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("auth.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    metodo_pago: Mapped[str] = mapped_column(METODO_PAGO_ENUM, nullable=False)
+    estado_pago: Mapped[str] = mapped_column(
+        ESTADO_PAGO_ENUM,
+        nullable=False,
+        server_default=text("'pendiente'::order_payment_status"),
+        default=EstadoPago.PENDIENTE,
+        index=True,
+    )
+    estado_envio: Mapped[str] = mapped_column(
+        ESTADO_ENVIO_ENUM,
+        nullable=False,
+        server_default=text("'pendiente'::order_shipping_status"),
+        default=EstadoEnvio.PENDIENTE,
+        index=True,
+    )
+    direccion_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("direcciones.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    direccion_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    subtotal_sin_iva: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    envio_sin_iva: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+        server_default=text("0"),
+        default=Decimal("0"),
+    )
+    iva_importe: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    moneda: Mapped[str] = mapped_column(
+        String(3),
+        nullable=False,
+        server_default=text("'EUR'"),
+        default="EUR",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), server_default=func.now(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now()
+    )
+
+    account: Mapped["AuthAccount"] = relationship("AuthAccount", back_populates="pedidos")
+    direccion: Mapped["Direccion | None"] = relationship(
+        "Direccion", back_populates="pedidos"
+    )
+    lines: Mapped[list["PedidoLine"]] = relationship(
+        "PedidoLine",
+        back_populates="pedido",
+        cascade="all, delete-orphan",
+        order_by="PedidoLine.line_index",
+    )
+
+
+class PedidoLine(Base):
+    """Línea de pedido: mismo JSON que `cart_line.line_data` (CartLineItem)."""
+
+    __tablename__ = "pedido_line"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    pedido_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("pedido.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    line_index: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    line_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    pedido: Mapped["Pedido"] = relationship("Pedido", back_populates="lines")
 
 
 class Cart(Base):
@@ -205,3 +338,19 @@ class CartLine(Base):
     line_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
     cart: Mapped["Cart"] = relationship("Cart", back_populates="lines")
+
+
+# Re-export enums for routers/schemas
+__all__ = [
+    "AuthAccount",
+    "Cart",
+    "CartLine",
+    "Contact",
+    "Direccion",
+    "EstadoEnvio",
+    "EstadoPago",
+    "MetodoPago",
+    "Pedido",
+    "PedidoLine",
+    "PedidoTicketSeq",
+]

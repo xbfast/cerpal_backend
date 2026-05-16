@@ -6,7 +6,7 @@ Create Date: 2026-05-16
 
 Tablas:
 - pedido_ticket_seq — numeración anual CERP-YYYY-NNNNNN
-- pedido — cabecera (ticket, usuario, pago, envío, dirección, totales)
+- pedido — cabecera (ticket, usuario, pago, envío, dirección, totales, notas checkout)
 - pedido_line — líneas; `line_data` JSONB = snapshot del carrito (CartLineItem)
 
 Enums PostgreSQL:

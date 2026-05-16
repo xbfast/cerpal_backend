@@ -238,6 +238,10 @@ class Pedido(Base):
         nullable=True,
     )
     direccion_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    referencia_pedido_cliente: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    notas_pedido: Mapped[str | None] = mapped_column(Text, nullable=True)
     subtotal_sin_iva: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     envio_sin_iva: Mapped[Decimal] = mapped_column(
         Numeric(12, 2),

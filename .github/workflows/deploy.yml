@@ -2,40 +2,79 @@ name: Deploy to DigitalOcean
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - run: pip install -r requirements.txt
-      - run: pip install pytest httpx
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest httpx
+
       - name: Run tests
-        run: pytest -v || echo "No tests yet"   # remove the || once you add real tests
+        run: pytest -v || echo "No tests yet"
 
   deploy:
     needs: test
     runs-on: ubuntu-latest
+
     steps:
       - name: SSH and deploy
         uses: appleboy/ssh-action@v1.0.3
+
         with:
           host: ${{ secrets.DROPLET_HOST }}
           username: ${{ secrets.DROPLET_USER }}
           key: ${{ secrets.DROPLET_SSH_KEY }}
           port: 22
+
           script: |
             set -e
+
+            echo "Starting deployment..."
+
             cd /home/app/cerpal_backend
+
+            echo "Fetching latest code..."
             git fetch origin main
             git reset --hard origin/main
+
+            echo "Activating virtual environment..."
             source venv/bin/activate
+
+            echo "Installing dependencies..."
             pip install -r requirements.txt
-            sudo systemctl start cerpal
-            sleep 2
-            sudo systemctl status cerpal --no-pager
+
+            COMMIT_MSG="${{ github.event.head_commit.message }}"
+
+            echo "Latest commit message:"
+            echo "$COMMIT_MSG"
+
+            if [[ "$COMMIT_MSG" == *"[migrate]"* ]]; then
+              echo "Running Alembic migrations..."
+              alembic upgrade head
+            else
+              echo "Skipping migrations..."
+            fi
+
+            echo "Restarting cerpal service..."
+            systemctl restart cerpal
+
+            sleep 3
+
+            echo "Checking service status..."
+            systemctl is-active cerpal
+
+            echo "Deployment successful"

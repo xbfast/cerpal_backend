@@ -4,19 +4,22 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
+
+# Evita el warning de Node 20 en checkout/setup-python (runner → Node 24)
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -24,21 +27,35 @@ jobs:
           pip install pytest httpx
 
       - name: Run tests
-        run: pytest -v || echo "No tests yet"
+        run: |
+          pytest -v
+        continue-on-error: true
 
   deploy:
     needs: test
     runs-on: ubuntu-latest
 
     steps:
+      - name: ¿Ejecutar migraciones?
+        id: migrate
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          if printf '%s' "$COMMIT_MESSAGE" | grep -qF '[migrate]'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: SSH and deploy
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.0
 
         with:
           host: ${{ secrets.DROPLET_HOST }}
           username: ${{ secrets.DROPLET_USER }}
           key: ${{ secrets.DROPLET_SSH_KEY }}
           port: 22
+          script_stop: true
 
           script: |
             set -e
@@ -57,16 +74,13 @@ jobs:
             echo "Installing dependencies..."
             pip install -r requirements.txt
 
-            COMMIT_MSG="${{ github.event.head_commit.message }}"
+            echo "Deploy SHA: ${{ github.sha }}"
 
-            echo "Latest commit message:"
-            echo "$COMMIT_MSG"
-
-            if [[ "$COMMIT_MSG" == *"[migrate]"* ]]; then
+            if [ "${{ steps.migrate.outputs.run }}" = "true" ]; then
               echo "Running Alembic migrations..."
               alembic upgrade head
             else
-              echo "Skipping migrations..."
+              echo "Skipping migrations (añade [migrate] al mensaje del commit para migrar)."
             fi
 
             echo "Restarting cerpal service..."

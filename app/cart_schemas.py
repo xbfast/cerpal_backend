@@ -31,6 +31,10 @@ class CartLineItem(BaseModel):
         None,
         max_length=32,
     )
+    rotulacion_selections: list[ImpresionSelectionItem] | None = Field(
+        None,
+        max_length=32,
+    )
     surface_m2: float | None = Field(None, ge=0, le=1_000_000)
     provider_ref: str | None = Field(None, max_length=128)
     color_name: str | None = Field(None, max_length=512)

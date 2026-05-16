@@ -58,7 +58,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # upgrade() no crea ix_cart_auth_id (solo uq_cart_auth_id); drop_index fallaba en prod
     op.drop_index(op.f("ix_cart_line_cart_id"), table_name="cart_line")
     op.drop_table("cart_line")
-    op.drop_index(op.f("ix_cart_auth_id"), table_name="cart")
     op.drop_table("cart")

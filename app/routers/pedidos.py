@@ -2,7 +2,7 @@ import logging
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, selectinload
@@ -17,6 +17,7 @@ from app.order_schemas import (
     PedidoListOut,
     PedidoOut,
 )
+from app.emails.order_confirmation import send_order_confirmation_email
 from app.order_service import create_order_from_cart
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ def _pedido_to_out(pedido: Pedido) -> PedidoOut:
     return PedidoOut(
         id=pedido.id,
         ticket_number=pedido.ticket_number,
+        created_at=pedido.created_at,
         metodo_pago=pedido.metodo_pago,
         estado_pago=pedido.estado_pago,
         estado_envio=pedido.estado_envio,
@@ -103,6 +105,7 @@ def listar_pedidos(
 @router.post("", response_model=PedidoOut, status_code=status.HTTP_201_CREATED)
 def crear_pedido(
     payload: PedidoCreateIn,
+    background_tasks: BackgroundTasks,
     user: AuthAccount = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PedidoOut:
@@ -128,4 +131,12 @@ def crear_pedido(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Pedido creado pero no se pudo cargar la respuesta.",
         )
-    return _pedido_to_out(loaded)
+    pedido_out = _pedido_to_out(loaded)
+    display = (user.nombre_responsable or user.nombre_empresa or "").strip()
+    background_tasks.add_task(
+        send_order_confirmation_email,
+        user.email,
+        display,
+        pedido_out,
+    )
+    return pedido_out

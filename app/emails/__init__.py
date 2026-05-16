@@ -1,0 +1,1 @@
+"""Correos transaccionales por dominio."""

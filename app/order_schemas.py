@@ -80,6 +80,7 @@ class PedidoOut(BaseModel):
 
     id: UUID
     ticket_number: str
+    created_at: datetime
     metodo_pago: MetodoPago
     estado_pago: EstadoPago
     estado_envio: EstadoEnvio

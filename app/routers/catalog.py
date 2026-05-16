@@ -139,11 +139,22 @@ _IMPRESION_SQL = f"""
 )
 """
 
+# Catálogo público: solo plantillas y variantes con active = TRUE.
+_TEMPLATE_HAS_ACTIVE_VARIANT_SQL = """
+EXISTS (
+    SELECT 1
+    FROM product_product pp_chk
+    WHERE pp_chk.template_id = pt.id
+      AND pp_chk.active IS TRUE
+)
+"""
+
 _COUNT_LIST_SQL = text(f"""
 SELECT COUNT(*)::int AS n
 FROM product_template pt
-WHERE COALESCE(pt.active, TRUE)
+WHERE pt.active IS TRUE
   AND pt.default_code ~ '^A'
+  AND {_TEMPLATE_HAS_ACTIVE_VARIANT_SQL.strip()}
   AND (
     (NOT :for_rotulacion AND {_IMPRESION_SQL})
     OR (:for_rotulacion AND {_ROTULACION_SQL})
@@ -162,7 +173,7 @@ _COLOR_PREDICATE = """
 _COLOR_SQL = text(f"""
 SELECT pt.id AS tmpl_id, array_agg(DISTINCT pav.name ORDER BY pav.name) AS color_names
 FROM product_template pt
-JOIN product_product pp ON pp.template_id = pt.id
+JOIN product_product pp ON pp.template_id = pt.id AND pp.active IS TRUE
 JOIN product_variant_attribute_value pvav ON pvav.product_id = pp.id
 JOIN product_template_attribute_line ptal ON ptal.id = pvav.attribute_line_id
 JOIN product_attribute pa ON pa.id = ptal.attribute_id
@@ -193,6 +204,7 @@ SELECT
             JOIN product_attribute pa ON pa.id = ptal.attribute_id
             JOIN product_attribute_value pav ON pav.id = pvav.attribute_value_id
             WHERE pp.template_id = pt.id
+              AND pp.active IS TRUE
               AND {_COLOR_PREDICATE}
         ) AS sub(name)
     ) AS color_names
@@ -201,15 +213,16 @@ LEFT JOIN LATERAL (
     SELECT pp.list_price, pp.image_url, pp.gallery_jsonb, pp.description_short
     FROM product_product pp
     WHERE pp.template_id = pt.id
-      AND COALESCE(pp.active, TRUE)
+      AND pp.active IS TRUE
     ORDER BY
         (CASE WHEN pp.description_short IS NOT NULL AND btrim(pp.description_short) <> '' THEN 1 ELSE 0 END) DESC,
         pp.list_price NULLS LAST,
         pp.default_code
     LIMIT 1
 ) price_info ON TRUE
-WHERE COALESCE(pt.active, TRUE)
+WHERE pt.active IS TRUE
   AND pt.default_code ~ '^A'
+  AND {_TEMPLATE_HAS_ACTIVE_VARIANT_SQL.strip()}
   AND (
     (NOT :for_rotulacion AND {_IMPRESION_SQL})
     OR (:for_rotulacion AND {_ROTULACION_SQL})
@@ -239,7 +252,7 @@ LEFT JOIN LATERAL (
         pp.description_long
     FROM product_product pp
     WHERE pp.template_id = pt.id
-      AND COALESCE(pp.active, TRUE)
+      AND pp.active IS TRUE
     ORDER BY
         (CASE WHEN pp.description_short IS NOT NULL AND btrim(pp.description_short) <> '' THEN 1 ELSE 0 END
          + CASE WHEN pp.description_long IS NOT NULL AND btrim(pp.description_long) <> '' THEN 1 ELSE 0 END) DESC,
@@ -247,8 +260,9 @@ LEFT JOIN LATERAL (
         pp.default_code
     LIMIT 1
 ) price_info ON TRUE
-WHERE COALESCE(pt.active, TRUE)
+WHERE pt.active IS TRUE
   AND pt.default_code ~ '^A'
+  AND {_TEMPLATE_HAS_ACTIVE_VARIANT_SQL.strip()}
   AND lower(regexp_replace(trim(pt.default_code), '[^a-zA-Z0-9]+', '-', 'g')) = :slug
   AND (
     (NOT :for_rotulacion AND {_IMPRESION_SQL})
@@ -276,7 +290,7 @@ LEFT JOIN product_template_attribute_line ptal ON ptal.id = pvav.attribute_line_
 LEFT JOIN product_attribute pa ON pa.id = ptal.attribute_id
 LEFT JOIN product_attribute_value pav ON pav.id = pvav.attribute_value_id
 WHERE pt.id = :tmpl_id
-  AND COALESCE(pp.active, TRUE)
+  AND pp.active IS TRUE
 ORDER BY pp.default_code, pa.name
 """)
 
@@ -302,7 +316,7 @@ JOIN product_template_attribute_line ptal ON ptal.id = pvav.attribute_line_id
 JOIN product_attribute pa ON pa.id = ptal.attribute_id
 JOIN product_attribute_value pav ON pav.id = pvav.attribute_value_id
 WHERE pp.template_id = :tmpl_id
-  AND COALESCE(pp.active, TRUE)
+  AND pp.active IS TRUE
 ORDER BY pa.name, pav.name, pp.id
 """)
 
@@ -329,8 +343,8 @@ LEFT JOIN LATERAL (
     JOIN product_attribute_value pav ON pav.id = pvav.attribute_value_id
     WHERE pvav.product_id = pp.id
 ) attrs ON TRUE
-WHERE COALESCE(pt.active, TRUE)
-  AND COALESCE(pp.active, TRUE)
+WHERE pt.active IS TRUE
+  AND pp.active IS TRUE
   AND pt.default_code ~ '^A'
   AND {_PUBLIC_CATALOG_SQL}
   AND (
@@ -355,7 +369,7 @@ WHERE COALESCE(pt.active, TRUE)
         SELECT 1
         FROM product_product pp_exact
         WHERE pp_exact.template_id = pt.id
-          AND COALESCE(pp_exact.active, TRUE)
+          AND pp_exact.active IS TRUE
           AND lower(pp_exact.default_code) = lower(pt.default_code)
     )
   )
@@ -531,8 +545,9 @@ WITH combined AS (
     (
         SELECT pt.id, 'impresion'::text AS catalog
         FROM product_template pt
-        WHERE COALESCE(pt.active, TRUE)
+        WHERE pt.active IS TRUE
           AND pt.default_code ~ '^A'
+          AND {_TEMPLATE_HAS_ACTIVE_VARIANT_SQL.strip()}
           AND ({_IMPRESION_SQL})
         ORDER BY random()
         LIMIT :n_imp
@@ -541,8 +556,9 @@ WITH combined AS (
     (
         SELECT pt.id, 'rotulacion'::text AS catalog
         FROM product_template pt
-        WHERE COALESCE(pt.active, TRUE)
+        WHERE pt.active IS TRUE
           AND pt.default_code ~ '^A'
+          AND {_TEMPLATE_HAS_ACTIVE_VARIANT_SQL.strip()}
           AND ({_ROTULACION_SQL})
         ORDER BY random()
         LIMIT :n_rot
@@ -563,7 +579,7 @@ LEFT JOIN LATERAL (
     SELECT pp.list_price, pp.image_url, pp.gallery_jsonb, pp.description_short
     FROM product_product pp
     WHERE pp.template_id = pt.id
-      AND COALESCE(pp.active, TRUE)
+      AND pp.active IS TRUE
     ORDER BY
         (CASE WHEN pp.description_short IS NOT NULL AND btrim(pp.description_short) <> '' THEN 1 ELSE 0 END) DESC,
         pp.list_price NULLS LAST,

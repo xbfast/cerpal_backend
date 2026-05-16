@@ -43,23 +43,16 @@ jobs:
         env:
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          run_migrate=false
+          run_migrate=0
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.run_migrate }}" = "true" ]; then
-            run_migrate=true
+            run_migrate=1
           elif printf '%s' "$COMMIT_MESSAGE" | grep -qF '[migrate]'; then
-            run_migrate=true
+            run_migrate=1
           fi
-          if [ "$run_migrate" = "true" ]; then
-            echo "run=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=0" >> "$GITHUB_OUTPUT"
-          fi
-          echo "migrate_flag=$run_migrate"
+          echo "run=$run_migrate" >> "$GITHUB_OUTPUT"
 
       - name: SSH and deploy
         uses: appleboy/ssh-action@v1.2.0
-        env:
-          RUN_MIGRATE: ${{ steps.migrate.outputs.run }}
 
         with:
           host: ${{ secrets.DROPLET_HOST }}
@@ -67,13 +60,11 @@ jobs:
           key: ${{ secrets.DROPLET_SSH_KEY }}
           port: 22
           script_stop: true
-          envs: RUN_MIGRATE
-          envs_format: "RUN_MIGRATE"
 
           script: |
-            # Sin set -e: con set -e, un if [ false = true ] puede cortar el script en dash/sh
             echo "Starting deployment..."
-            echo "RUN_MIGRATE=${RUN_MIGRATE:-0}"
+            RUN_MIGRATE=${{ steps.migrate.outputs.run }}
+            echo "RUN_MIGRATE=$RUN_MIGRATE"
 
             cd /home/app/cerpal_backend || exit 1
 
@@ -82,27 +73,22 @@ jobs:
             git reset --hard origin/main
 
             echo "Activating virtual environment..."
-            # shellcheck disable=SC1091
-            source venv/bin/activate
+            . venv/bin/activate
 
             echo "Installing dependencies..."
             pip install -r requirements.txt
 
             echo "Deploy SHA: ${{ github.sha }}"
 
-            if [ "${RUN_MIGRATE:-0}" = "1" ]; then
+            if [ "$RUN_MIGRATE" = "1" ]; then
               echo "Running Alembic migrations..."
               alembic upgrade head
             else
-              echo "Skipping migrations (commit con [migrate] o workflow_dispatch run_migrate=true)."
+              echo "Skipping migrations."
             fi
 
             echo "Restarting cerpal service..."
             systemctl restart cerpal
-
             sleep 3
-
-            echo "Checking service status..."
             systemctl is-active cerpal
-
             echo "Deployment successful"

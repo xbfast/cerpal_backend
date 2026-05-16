@@ -128,6 +128,8 @@ def load_excel():
         "Padre":           "padre",
         "Imagen":          "imagen",
         "GALERIA - JSONB": "galeria",
+        "Descripción Corta": "desc_corta",
+        "Descripción Larga": "desc_larga",
     })
     df_attrs["code"]      = df_attrs["code"].astype(str).str.strip()
     df_attrs["padre"]     = df_attrs["padre"].fillna(df_attrs["code"]).astype(str).str.strip()
@@ -304,14 +306,20 @@ def migrate_attribute_values(df_vals, df_attrs):
 def migrate_products(df_precio, df_attrs):
     sep("PASO 4 · Templates y variantes")
 
-    # Imagen y galería desde hoja Atributos (por variante, lleva al producto)
-    img_map = {}
-    gal_map = {}
+    # Imagen, galería y descripciones desde hoja Atributos (por variante)
+    img_map       = {}
+    gal_map       = {}
+    desc_corta_map = {}
+    desc_larga_map = {}
     for _, r in df_attrs.drop_duplicates("code").iterrows():
         if clean(r.get("imagen")):
             img_map[r["code"]] = clean(r["imagen"])
         if clean(r.get("galeria")):
             gal_map[r["code"]] = clean(r["galeria"])
+        if clean(r.get("desc_corta")):
+            desc_corta_map[r["code"]] = clean(r["desc_corta"])
+        if clean(r.get("desc_larga")):
+            desc_larga_map[r["code"]] = clean(r["desc_larga"])
 
     # Un template por cada valor único de "padre".
     # Ordenar para que .first() prefiera filas con descripción no vacía (evita NOT NULL en name).
@@ -362,21 +370,27 @@ def migrate_products(df_precio, df_attrs):
             if not tmpl_id:
                 skipped += 1
                 continue
-            precio  = float(r["list_price"]) if pd.notna(r["list_price"]) else None
-            imagen  = img_map.get(r["code"])
-            galeria = gal_map.get(r["code"])
+            precio   = float(r["list_price"]) if pd.notna(r["list_price"]) else None
+            imagen   = img_map.get(r["code"])
+            galeria  = gal_map.get(r["code"])
+            desc_c   = desc_corta_map.get(r["code"])
+            desc_l   = desc_larga_map.get(r["code"])
             var_name = _non_empty_name(r.get("name"), r["code"])
             cur.execute("""
                 INSERT INTO product_product
-                    (template_id, default_code, name, list_price, active, image_url, gallery_jsonb)
-                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+                    (template_id, default_code, name, list_price, active,
+                     image_url, gallery_jsonb, description_short, description_long)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
                 ON CONFLICT (default_code) DO UPDATE SET
-                    name          = EXCLUDED.name,
-                    list_price    = EXCLUDED.list_price,
-                    active        = EXCLUDED.active,
-                    image_url     = EXCLUDED.image_url,
-                    gallery_jsonb = EXCLUDED.gallery_jsonb
-            """, (tmpl_id, r["code"], var_name, precio, bool(r["active"]), imagen, galeria))
+                    name              = EXCLUDED.name,
+                    list_price        = EXCLUDED.list_price,
+                    active            = EXCLUDED.active,
+                    image_url         = EXCLUDED.image_url,
+                    gallery_jsonb     = EXCLUDED.gallery_jsonb,
+                    description_short = EXCLUDED.description_short,
+                    description_long  = EXCLUDED.description_long
+            """, (tmpl_id, r["code"], var_name, precio, bool(r["active"]),
+                  imagen, galeria, desc_c, desc_l))
             ok += 1
 
         conn.commit()
@@ -544,6 +558,8 @@ def validate():
         (False, "  · con precio",           "SELECT COUNT(*) FROM product_product WHERE list_price IS NOT NULL"),
         (False, "  · activas",              "SELECT COUNT(*) FROM product_product WHERE active = TRUE"),
         (False, "  · con imagen",           "SELECT COUNT(*) FROM product_product WHERE image_url IS NOT NULL"),
+        (False, "  · con desc. corta",      "SELECT COUNT(*) FROM product_product WHERE description_short IS NOT NULL"),
+        (False, "  · con desc. larga",      "SELECT COUNT(*) FROM product_product WHERE description_long IS NOT NULL"),
         (False, "Asignaciones categoría",   "SELECT COUNT(*) FROM product_template_category"),
         (False, "Líneas atributo/template", "SELECT COUNT(*) FROM product_template_attribute_line"),
         (False, "Valores por variante",     "SELECT COUNT(*) FROM product_variant_attribute_value"),

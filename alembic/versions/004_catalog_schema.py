@@ -102,6 +102,8 @@ CREATE TABLE IF NOT EXISTS product_product (
     active          BOOLEAN      DEFAULT TRUE,
     image_url       VARCHAR(500),
     gallery_jsonb   JSONB,
+    description_short TEXT,
+    description_long  TEXT,
     odoo_product_id INTEGER,
     created_at      TIMESTAMP DEFAULT NOW()
 );

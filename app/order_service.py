@@ -85,7 +85,7 @@ def next_ticket_number(db: Session) -> str:
         db.flush()
     seq.last_number = int(seq.last_number) + 1
     db.flush()
-    return f"CERP-{year}-{seq.last_number:06d}"
+    return f"{year}-{seq.last_number:06d}"
 
 
 def direccion_to_snapshot(d: Direccion) -> dict:

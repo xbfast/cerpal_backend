@@ -1,5 +1,6 @@
 """Esquemas de pedido (API / checkout)."""
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Self
 from uuid import UUID
@@ -45,6 +46,36 @@ class PedidoCreateIn(BaseModel):
         if self.tipo_envio == "delivery" and self.direccion_id is None:
             raise ValueError("direccion_id es obligatoria para envío a domicilio.")
         return self
+
+
+class PedidoLinePreview(BaseModel):
+    """Resumen de línea para listados (sin JSON completo)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    image: str
+    quantity: int
+    catalog: Literal["impresion", "rotulacion"]
+
+
+class PedidoListOut(BaseModel):
+    """Pedido en listado (historial del cliente)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    ticket_number: str
+    created_at: datetime
+    metodo_pago: MetodoPago
+    estado_pago: EstadoPago
+    estado_envio: EstadoEnvio
+    tipo_envio: Literal["delivery", "warehouse"] = "delivery"
+    referencia_pedido_cliente: str | None
+    total: Decimal
+    moneda: str
+    line_count: int = Field(..., ge=0)
+    lines_preview: list[PedidoLinePreview] = Field(default_factory=list)
 
 
 class PedidoLineOut(BaseModel):

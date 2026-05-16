@@ -192,7 +192,7 @@ class Direccion(Base):
 
 
 class PedidoTicketSeq(Base):
-    """Contador anual para `ticket_number` (CERP-YYYY-NNNNNN)."""
+    """Contador anual para `ticket_number` (YYYY-NNNNNN)."""
 
     __tablename__ = "pedido_ticket_seq"
 

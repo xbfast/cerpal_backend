@@ -6,6 +6,13 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+class ImpresionSelectionItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    label: str = Field(..., min_length=1, max_length=128)
+    value: str = Field(..., min_length=1, max_length=512)
+
+
 class CartLineItem(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -20,6 +27,10 @@ class CartLineItem(BaseModel):
     price_per_unit: float = Field(..., ge=0, le=9_999_999.99)
     unit_label: str | None = Field(None, max_length=512)
     options_summary: str | None = Field(None, max_length=1024)
+    impresion_selections: list[ImpresionSelectionItem] | None = Field(
+        None,
+        max_length=32,
+    )
     surface_m2: float | None = Field(None, ge=0, le=1_000_000)
     provider_ref: str | None = Field(None, max_length=128)
     color_name: str | None = Field(None, max_length=512)

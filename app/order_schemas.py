@@ -1,20 +1,22 @@
 """Esquemas de pedido (API / checkout)."""
 
 from decimal import Decimal
+from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.cart_schemas import CartLineItem
 from app.order_enums import EstadoEnvio, EstadoPago, MetodoPago
 
 
 class PedidoCreateIn(BaseModel):
-    """Payload al confirmar checkout (totales calculados en servidor recomendado)."""
+    """Payload al confirmar checkout."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    direccion_id: UUID
+    tipo_envio: Literal["delivery", "warehouse"] = "delivery"
+    direccion_id: UUID | None = None
     metodo_pago: MetodoPago
     referencia_pedido_cliente: str | None = Field(None, max_length=128)
     notas_pedido: str | None = Field(None, max_length=4000)
@@ -22,6 +24,27 @@ class PedidoCreateIn(BaseModel):
     envio_sin_iva: Decimal = Field(..., ge=0, decimal_places=2)
     iva_importe: Decimal = Field(..., ge=0, decimal_places=2)
     total: Decimal = Field(..., ge=0, decimal_places=2)
+
+    @field_validator(
+        "referencia_pedido_cliente",
+        "notas_pedido",
+        mode="before",
+    )
+    @classmethod
+    def opcional_vacio_a_none(cls, v: object) -> object:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @model_validator(mode="after")
+    def direccion_requerida_en_domicilio(self) -> Self:
+        if self.tipo_envio == "delivery" and self.direccion_id is None:
+            raise ValueError("direccion_id es obligatoria para envío a domicilio.")
+        return self
 
 
 class PedidoLineOut(BaseModel):
@@ -40,6 +63,7 @@ class PedidoOut(BaseModel):
     metodo_pago: MetodoPago
     estado_pago: EstadoPago
     estado_envio: EstadoEnvio
+    tipo_envio: Literal["delivery", "warehouse"] = "delivery"
     referencia_pedido_cliente: str | None
     notas_pedido: str | None
     subtotal_sin_iva: Decimal
@@ -47,4 +71,5 @@ class PedidoOut(BaseModel):
     iva_importe: Decimal
     total: Decimal
     moneda: str
+    direccion_snapshot: dict
     lines: list[PedidoLineOut] = Field(default_factory=list)

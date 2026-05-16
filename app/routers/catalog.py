@@ -178,6 +178,7 @@ SELECT
     pt.name,
     price_info.list_price,
     price_info.image_url,
+    price_info.description_short,
     (
         SELECT coalesce(
             array_agg(sub.name ORDER BY sub.name),
@@ -196,11 +197,14 @@ SELECT
     ) AS color_names
 FROM product_template pt
 LEFT JOIN LATERAL (
-    SELECT pp.list_price, pp.image_url, pp.gallery_jsonb
+    SELECT pp.list_price, pp.image_url, pp.gallery_jsonb, pp.description_short
     FROM product_product pp
     WHERE pp.template_id = pt.id
       AND COALESCE(pp.active, TRUE)
-    ORDER BY pp.list_price NULLS LAST, pp.default_code
+    ORDER BY
+        (CASE WHEN pp.description_short IS NOT NULL AND btrim(pp.description_short) <> '' THEN 1 ELSE 0 END) DESC,
+        pp.list_price NULLS LAST,
+        pp.default_code
     LIMIT 1
 ) price_info ON TRUE
 WHERE COALESCE(pt.active, TRUE)
@@ -474,13 +478,14 @@ def _row_to_list_item(
     default_code = str(row["default_code"])
     slug = slug_from_default_code(default_code)
     title = str(row["name"] or default_code)
+    description_short = _opt_str(row.get("description_short"))
     keys, extra = swatch_keys_from_color_names(color_names)
     return CatalogListItemOut(
         catalog=catalog,  # type: ignore[arg-type]
         id=f"tmpl-{row['id']}",
         slug=slug,
         title=title,
-        description=truncate_text(title, 220),
+        description=truncate_text(description_short, 220),
         price=format_price_eur(row.get("list_price")),  # type: ignore[arg-type]
         image=_image_or_placeholder(
             row.get("image_url"),
@@ -529,14 +534,17 @@ def catalog_featured(
     half = max(1, limit // 2)
     rest = limit - half
     _feat_sql = text(f"""
-SELECT pt.id, pt.default_code, pt.name, price_info.list_price, price_info.image_url
+SELECT pt.id, pt.default_code, pt.name, price_info.list_price, price_info.image_url, price_info.description_short
 FROM product_template pt
 LEFT JOIN LATERAL (
-    SELECT pp.list_price, pp.image_url, pp.gallery_jsonb
+    SELECT pp.list_price, pp.image_url, pp.gallery_jsonb, pp.description_short
     FROM product_product pp
     WHERE pp.template_id = pt.id
       AND COALESCE(pp.active, TRUE)
-    ORDER BY pp.list_price NULLS LAST, pp.default_code
+    ORDER BY
+        (CASE WHEN pp.description_short IS NOT NULL AND btrim(pp.description_short) <> '' THEN 1 ELSE 0 END) DESC,
+        pp.list_price NULLS LAST,
+        pp.default_code
     LIMIT 1
 ) price_info ON TRUE
 WHERE COALESCE(pt.active, TRUE)

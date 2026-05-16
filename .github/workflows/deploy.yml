@@ -59,14 +59,15 @@ jobs:
           username: ${{ secrets.DROPLET_USER }}
           key: ${{ secrets.DROPLET_SSH_KEY }}
           port: 22
-          script_stop: true
+          # script_stop trata el if [ 0 = 1 ] como fallo; usamos case y exit explícito al final
+          script_stop: false
 
           script: |
             echo "Starting deployment..."
             RUN_MIGRATE=${{ steps.migrate.outputs.run }}
             echo "RUN_MIGRATE=$RUN_MIGRATE"
 
-            cd /home/app/cerpal_backend || exit 1
+            cd /home/app/cerpal_backend || { echo "cd failed"; exit 1; }
 
             echo "Fetching latest code..."
             git fetch origin main
@@ -80,15 +81,23 @@ jobs:
 
             echo "Deploy SHA: ${{ github.sha }}"
 
-            if [ "$RUN_MIGRATE" = "1" ]; then
-              echo "Running Alembic migrations..."
-              alembic upgrade head
-            else
-              echo "Skipping migrations."
-            fi
+            case "$RUN_MIGRATE" in
+              1)
+                echo "Running Alembic migrations..."
+                alembic upgrade head
+                ;;
+              *)
+                echo "Skipping migrations."
+                ;;
+            esac
 
             echo "Restarting cerpal service..."
             systemctl restart cerpal
             sleep 3
-            systemctl is-active cerpal
+
+            if ! systemctl is-active cerpal; then
+              echo "cerpal service is not active"
+              exit 1
+            fi
+
             echo "Deployment successful"

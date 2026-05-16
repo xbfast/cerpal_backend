@@ -67,6 +67,8 @@ class CatalogSearchResultOut(BaseModel):
 
 
 class CatalogProductDetailOut(CatalogListItemOut):
+    descriptionShort: str | None = None
+    descriptionLong: str | None = None
     descriptionDetail: str | None = None
     characteristics: list[str] = Field(default_factory=list)
     fichaTecnica: list[str] = Field(default_factory=list)

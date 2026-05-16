@@ -221,14 +221,25 @@ SELECT
     pt.active,
     price_info.list_price,
     price_info.image_url,
-    price_info.gallery_jsonb
+    price_info.gallery_jsonb,
+    price_info.description_short,
+    price_info.description_long
 FROM product_template pt
 LEFT JOIN LATERAL (
-    SELECT pp.list_price, pp.image_url, pp.gallery_jsonb
+    SELECT
+        pp.list_price,
+        pp.image_url,
+        pp.gallery_jsonb,
+        pp.description_short,
+        pp.description_long
     FROM product_product pp
     WHERE pp.template_id = pt.id
       AND COALESCE(pp.active, TRUE)
-    ORDER BY pp.list_price NULLS LAST, pp.default_code
+    ORDER BY
+        (CASE WHEN pp.description_short IS NOT NULL AND btrim(pp.description_short) <> '' THEN 1 ELSE 0 END
+         + CASE WHEN pp.description_long IS NOT NULL AND btrim(pp.description_long) <> '' THEN 1 ELSE 0 END) DESC,
+        pp.list_price NULLS LAST,
+        pp.default_code
     LIMIT 1
 ) price_info ON TRUE
 WHERE COALESCE(pt.active, TRUE)
@@ -762,18 +773,16 @@ def get_catalog_product(catalog: str, slug: str, db: Session = Depends(get_db)):
 
     characteristics = _build_characteristics_from_variants(v.attributes for v in variants)
 
-    num_v = len(variants)
-    desc_detail = (
-        f"{title}\n\n"
-        f"Referencias en catálogo: {num_v} variante(s). "
-        f"Elige opciones en el configurador; los importes de muestra siguen siendo orientativos hasta conectar precios por variante."
-    )
+    description_short = _opt_str(row.get("description_short"))
+    description_long = _opt_str(row.get("description_long"))
 
     base_item = _row_to_list_item(row, catalog, color_names)
     gallery = _gallery_list(row.get("gallery_jsonb"))
     return CatalogProductDetailOut(
         **base_item.model_dump(),
-        descriptionDetail=desc_detail,
+        descriptionShort=description_short,
+        descriptionLong=description_long,
+        descriptionDetail=description_short,
         characteristics=characteristics,
         fichaTecnica=[],
         cartaColores=(

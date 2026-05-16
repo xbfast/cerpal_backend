@@ -48,17 +48,6 @@ class PedidoCreateIn(BaseModel):
         return self
 
 
-class PedidoLinePreview(BaseModel):
-    """Resumen de línea para listados (sin JSON completo)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    title: str
-    image: str
-    quantity: int
-    catalog: Literal["impresion", "rotulacion"]
-
-
 class PedidoListOut(BaseModel):
     """Pedido en listado (historial del cliente)."""
 
@@ -75,7 +64,7 @@ class PedidoListOut(BaseModel):
     total: Decimal
     moneda: str
     line_count: int = Field(..., ge=0)
-    lines_preview: list[PedidoLinePreview] = Field(default_factory=list)
+    lines: list[CartLineItem] = Field(default_factory=list)
 
 
 class PedidoLineOut(BaseModel):

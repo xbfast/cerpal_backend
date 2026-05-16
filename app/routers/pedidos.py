@@ -14,7 +14,6 @@ from app.cart_schemas import CartLineItem
 from app.order_schemas import (
     PedidoCreateIn,
     PedidoLineOut,
-    PedidoLinePreview,
     PedidoListOut,
     PedidoOut,
 )
@@ -32,35 +31,17 @@ def _tipo_envio_from_snapshot(snapshot: dict) -> Literal["delivery", "warehouse"
     return "delivery"
 
 
-def _lines_preview(pedido: Pedido) -> list[PedidoLinePreview]:
-    out: list[PedidoLinePreview] = []
+def _pedido_lines(pedido: Pedido) -> list[CartLineItem]:
+    out: list[CartLineItem] = []
     for ln in sorted(pedido.lines, key=lambda x: x.line_index):
         data = ln.line_data if isinstance(ln.line_data, dict) else {}
-        title = str(data.get("title") or "").strip()
-        if not title:
-            continue
-        image = str(data.get("image") or "").strip()
-        catalog = data.get("catalog")
-        if catalog not in ("impresion", "rotulacion"):
-            catalog = "impresion"
-        try:
-            qty = int(data.get("quantity") or 1)
-        except (TypeError, ValueError):
-            qty = 1
-        out.append(
-            PedidoLinePreview(
-                title=title,
-                image=image,
-                quantity=max(1, qty),
-                catalog=catalog,
-            )
-        )
+        out.append(CartLineItem.model_validate(data))
     return out
 
 
 def _pedido_to_list_out(pedido: Pedido) -> PedidoListOut:
     snapshot = pedido.direccion_snapshot if isinstance(pedido.direccion_snapshot, dict) else {}
-    lines = _lines_preview(pedido)
+    lines = _pedido_lines(pedido)
     return PedidoListOut(
         id=pedido.id,
         ticket_number=pedido.ticket_number,
@@ -73,7 +54,7 @@ def _pedido_to_list_out(pedido: Pedido) -> PedidoListOut:
         total=pedido.total,
         moneda=pedido.moneda,
         line_count=len(pedido.lines),
-        lines_preview=lines,
+        lines=lines,
     )
 
 

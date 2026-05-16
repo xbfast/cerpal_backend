@@ -242,6 +242,14 @@ class Pedido(Base):
         String(128), nullable=True
     )
     notas_pedido: Mapped[str | None] = mapped_column(Text, nullable=True)
+    redsys_order_id: Mapped[str | None] = mapped_column(
+        String(12), nullable=True, unique=True, index=True
+    )
+    redsys_authorization_code: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    redsys_response_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    redsys_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     subtotal_sin_iva: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     envio_sin_iva: Mapped[Decimal] = mapped_column(
         Numeric(12, 2),

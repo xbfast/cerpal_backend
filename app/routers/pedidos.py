@@ -18,7 +18,9 @@ from app.order_schemas import (
     PedidoOut,
 )
 from app.emails.order_confirmation import send_order_confirmation_email
+from app.order_enums import MetodoPago
 from app.order_service import create_order_from_cart
+from app.payments.redsys import build_payment_form, redsys_config
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,8 @@ def crear_pedido(
     user: AuthAccount = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PedidoOut:
+    if payload.metodo_pago == MetodoPago.CARD:
+        redsys_config()
     try:
         pedido = create_order_from_cart(db, user.id, payload)
     except HTTPException:
@@ -132,11 +136,19 @@ def crear_pedido(
             detail="Pedido creado pero no se pudo cargar la respuesta.",
         )
     pedido_out = _pedido_to_out(loaded)
+    if loaded.metodo_pago == MetodoPago.CARD and loaded.redsys_order_id:
+        pedido_out.redsys_payment = build_payment_form(
+            order=loaded.redsys_order_id,
+            amount=loaded.total,
+            description=f"Pedido {loaded.ticket_number} CERPAL",
+            pedido_id=str(loaded.id),
+        )
     display = (user.nombre_responsable or user.nombre_empresa or "").strip()
-    background_tasks.add_task(
-        send_order_confirmation_email,
-        user.email,
-        display,
-        pedido_out,
-    )
+    if loaded.metodo_pago == MetodoPago.TRANSFER:
+        background_tasks.add_task(
+            send_order_confirmation_email,
+            user.email,
+            display,
+            pedido_out,
+        )
     return pedido_out

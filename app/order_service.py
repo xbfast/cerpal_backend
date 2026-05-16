@@ -88,6 +88,17 @@ def next_ticket_number(db: Session) -> str:
     return f"{year}-{seq.last_number:06d}"
 
 
+def redsys_order_from_ticket(ticket_number: str) -> str:
+    """Redsys exige un identificador corto (4-12 caracteres, iniciando por números)."""
+    digits = "".join(ch for ch in ticket_number if ch.isdigit())
+    if len(digits) < 4:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo generar la referencia Redsys del pedido.",
+        )
+    return digits[:12]
+
+
 def direccion_to_snapshot(d: Direccion) -> dict:
     return {
         "tipo_envio": "delivery",
@@ -158,10 +169,10 @@ def create_order_from_cart(
     auth_id: UUID,
     payload: PedidoCreateIn,
 ) -> Pedido:
-    if payload.metodo_pago != MetodoPago.TRANSFER:
+    if payload.metodo_pago not in (MetodoPago.TRANSFER, MetodoPago.CARD):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="De momento solo está disponible el pago por transferencia bancaria.",
+            detail="Método de pago no disponible.",
         )
 
     cart_items = load_cart_lines(db, auth_id)
@@ -182,12 +193,20 @@ def create_order_from_cart(
         payload.direccion_id,
     )
 
+    ticket_number = next_ticket_number(db)
+    redsys_order_id = (
+        redsys_order_from_ticket(ticket_number)
+        if payload.metodo_pago == MetodoPago.CARD
+        else None
+    )
+
     pedido = Pedido(
-        ticket_number=next_ticket_number(db),
+        ticket_number=ticket_number,
         auth_id=auth_id,
         metodo_pago=str(payload.metodo_pago),
         estado_pago=str(EstadoPago.PENDIENTE),
         estado_envio=str(EstadoEnvio.PENDIENTE),
+        redsys_order_id=redsys_order_id,
         direccion_id=direccion_id,
         direccion_snapshot=snapshot,
         referencia_pedido_cliente=payload.referencia_pedido_cliente,

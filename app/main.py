@@ -31,6 +31,7 @@ from app.routers import catalog as catalog_router
 from app.routers import contacts as contacts_router
 from app.routers import direcciones as direcciones_router
 from app.routers import pedidos as pedidos_router
+from app.routers import redsys as redsys_router
 
 app = FastAPI(title="Cerpal API", version="0.1.0")
 
@@ -60,6 +61,7 @@ app.include_router(catalog_router.router)
 app.include_router(contacts_router.router)
 app.include_router(direcciones_router.router)
 app.include_router(pedidos_router.router)
+app.include_router(redsys_router.router)
 
 
 @app.on_event("startup")

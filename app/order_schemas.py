@@ -75,6 +75,13 @@ class PedidoLineOut(BaseModel):
     line_data: CartLineItem
 
 
+class RedsysPaymentOut(BaseModel):
+    action: str
+    Ds_SignatureVersion: str
+    Ds_MerchantParameters: str
+    Ds_Signature: str
+
+
 class PedidoOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -94,3 +101,4 @@ class PedidoOut(BaseModel):
     moneda: str
     direccion_snapshot: dict
     lines: list[PedidoLineOut] = Field(default_factory=list)
+    redsys_payment: RedsysPaymentOut | None = None

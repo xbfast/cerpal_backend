@@ -1,18 +1,8 @@
 """
-SMTP con fastapi-mail. Los valores NO van en este archivo: van en variables de entorno.
+Correo transaccional por SMTP (IONOS u otro proveedor).
 
-En local, créalas en `cerpal_backend/.env` (copia de `.env.example`). Ese archivo se carga
-al arrancar vía `python-dotenv` desde `app/database.py`.
-
-En Docker/producción, define las mismas variables en el servicio (compose, Kubernetes, etc.);
-no subas `.env` con secretos al repositorio.
-
-Si `MAIL_SERVER` está vacío, el correo queda desactivado y la API funciona igual.
-
-Variables:
-  MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, MAIL_FROM, MAIL_FROM_NAME,
-  MAIL_STARTTLS, MAIL_SSL_TLS, MAIL_USE_CREDENTIALS, MAIL_VALIDATE_CERTS,
-  MAIL_EHLO_HOSTNAME (opcional; ver docstring de _resolve_ehlo_hostname)
+Variables en `cerpal_backend/.env` (ver `.env.example`).
+Sin `MAIL_SERVER` el correo queda desactivado y la API sigue funcionando.
 """
 
 from __future__ import annotations
@@ -36,17 +26,6 @@ def _env_bool(name: str, default: str = "false") -> bool:
 
 
 def _resolve_ehlo_hostname(mail_from: str) -> str | None:
-    """
-    Hostname en EHLO/HELO (local_hostname de aiosmtplib).
-
-    - Si existe la variable de entorno MAIL_EHLO_HOSTNAME: su valor (vacío = dejar
-      que la librería use el FQDN del sistema, p. ej. nombre del contenedor).
-    - Si no está definida: `mail.<dominio>` a partir de MAIL_FROM, para evitar
-      EHLO genérico en Docker que a veces se asocia peor a entrega/spam.
-
-    Mailjet acepta el mensaje con 250 aunque luego el buzón filtre; un EHLO
-    coherente con el dominio del remitente suele alinearse mejor con otras apps.
-    """
     if "MAIL_EHLO_HOSTNAME" in os.environ:
         v = os.environ["MAIL_EHLO_HOSTNAME"].strip()
         return v or None
@@ -90,7 +69,6 @@ async def _send_smtp(conf: ConnectionConfig, mime_msg, local_hostname: str | Non
 
 
 def build_connection_config() -> ConnectionConfig | None:
-    """Devuelve configuración SMTP o `None` si el correo no está activo."""
     server = os.getenv("MAIL_SERVER", "").strip()
     if not server:
         return None
@@ -113,12 +91,16 @@ def build_connection_config() -> ConnectionConfig | None:
         port = 587
 
     mail_ssl_tls = _env_bool("MAIL_SSL_TLS", "false")
-    # aiosmtplib: STARTTLS (587) e SSL implícito (465) son incompatibles entre sí.
     mail_starttls = (
         False if mail_ssl_tls else _env_bool("MAIL_STARTTLS", "true")
     )
-
     from_name = os.getenv("MAIL_FROM_NAME", "").strip() or None
+
+    try:
+        timeout = float(os.getenv("MAIL_TIMEOUT", "30").strip())
+    except ValueError:
+        timeout = 30.0
+    timeout = max(5.0, min(timeout, 120.0))
 
     try:
         return ConnectionConfig(
@@ -132,6 +114,7 @@ def build_connection_config() -> ConnectionConfig | None:
             MAIL_SSL_TLS=mail_ssl_tls,
             USE_CREDENTIALS=_env_bool("MAIL_USE_CREDENTIALS", "true"),
             VALIDATE_CERTS=_env_bool("MAIL_VALIDATE_CERTS", "true"),
+            TIMEOUT=timeout,
         )
     except Exception:
         logger.exception("No se pudo crear la configuración SMTP.")
@@ -139,7 +122,6 @@ def build_connection_config() -> ConnectionConfig | None:
 
 
 def init_mail() -> None:
-    """Construye `FastMail` al arrancar la aplicación."""
     global _fast_mail, _mail_config
 
     conf = build_connection_config()
@@ -147,9 +129,8 @@ def init_mail() -> None:
         _fast_mail = None
         _mail_config = None
         logger.info(
-            "Correo SMTP desactivado: MAIL_SERVER no llega a este proceso. "
-            "Docker: el contenedor no lee tu .env salvo que compose use `env_file: .env`. "
-            "Local: revisa `cerpal_backend/.env`."
+            "Correo SMTP desactivado: MAIL_SERVER vacío. "
+            "Revisa `cerpal_backend/.env` en el servidor."
         )
         return
 
@@ -165,7 +146,6 @@ def init_mail() -> None:
 
 
 def get_fast_mail() -> FastMail | None:
-    """Instancia `FastMail` o `None` si no hay configuración."""
     return _fast_mail
 
 
@@ -174,7 +154,6 @@ def is_mail_configured() -> bool:
 
 
 async def send_mail_message(message: MessageSchema) -> bool:
-    """Envía un correo. Devuelve False si SMTP no está configurado."""
     conf = _mail_config
     if conf is None:
         logger.warning("Envío de correo omitido: SMTP no configurado.")
@@ -186,6 +165,12 @@ async def send_mail_message(message: MessageSchema) -> bool:
     try:
         mime_msg = await _build_mime_message(conf, message)
         ehlo = _resolve_ehlo_hostname(str(conf.MAIL_FROM))
+        logger.info(
+            "Conectando a SMTP %s:%s (timeout %ss)…",
+            conf.MAIL_SERVER,
+            conf.MAIL_PORT,
+            conf.TIMEOUT,
+        )
         await _send_smtp(conf, mime_msg, ehlo)
         email_dispatched.send(mime_msg)
         logger.info(
@@ -194,10 +179,13 @@ async def send_mail_message(message: MessageSchema) -> bool:
             message.recipients,
         )
         return True
-    except Exception:
+    except Exception as e:
         logger.exception(
-            "Fallo SMTP al enviar correo (asunto=%r, destinatarios=%s).",
+            "Fallo SMTP al enviar correo (asunto=%r, destinatarios=%s, servidor=%s:%s): %s",
             message.subject,
             message.recipients,
+            conf.MAIL_SERVER,
+            conf.MAIL_PORT,
+            e,
         )
         return False

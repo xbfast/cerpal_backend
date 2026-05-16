@@ -31,9 +31,12 @@ async def _run(recipient: str) -> int:
 
     init_mail()
     if not is_mail_configured():
-        logging.error("SMTP no configurado (MAIL_SERVER vacío o credenciales incompletas).")
+        logging.error(
+            "SMTP no configurado (MAIL_SERVER, MAIL_USERNAME, MAIL_PASSWORD, MAIL_FROM)."
+        )
         return 1
 
+    logging.info("Enviando correo de prueba a %s…", recipient)
     ok = await send_mail_message(
         MessageSchema(
             subject="Prueba Cerpal (SMTP)",

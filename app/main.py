@@ -35,7 +35,8 @@ app = FastAPI(title="Cerpal API", version="0.1.0")
 
 _default_cors = (
     "http://localhost:5173,http://127.0.0.1:5173,"
-    "http://localhost:4173,http://127.0.0.1:4173"
+    "http://localhost:4173,http://127.0.0.1:4173,"
+    "http://138.68.141.65"
 )
 _raw = os.getenv("CORS_ORIGINS", _default_cors).strip()
 _origins = [o.strip() for o in _raw.split(",") if o.strip()]

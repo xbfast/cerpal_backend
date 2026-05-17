@@ -61,6 +61,7 @@ class PedidoListOut(BaseModel):
     estado_envio: EstadoEnvio
     tipo_envio: Literal["delivery", "warehouse"] = "delivery"
     referencia_pedido_cliente: str | None
+    envio_sin_iva: Decimal
     total: Decimal
     moneda: str
     line_count: int = Field(..., ge=0)

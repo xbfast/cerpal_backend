@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from decimal import Decimal
+import uuid
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -222,14 +223,15 @@ def create_order_from_cart(
     for idx, item in enumerate(cart_items):
         db.add(
             PedidoLine(
-                id=item.id,
+                id=uuid.uuid4(),
                 pedido_id=pedido.id,
                 line_index=idx,
                 line_data=item.model_dump(mode="json"),
             )
         )
 
-    clear_user_cart(db, auth_id)
+    if payload.metodo_pago == MetodoPago.TRANSFER:
+        clear_user_cart(db, auth_id)
     db.commit()
     db.refresh(pedido)
     return pedido

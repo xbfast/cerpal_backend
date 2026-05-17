@@ -54,6 +54,7 @@ def _pedido_to_list_out(pedido: Pedido) -> PedidoListOut:
         estado_envio=pedido.estado_envio,
         tipo_envio=_tipo_envio_from_snapshot(snapshot),
         referencia_pedido_cliente=pedido.referencia_pedido_cliente,
+        envio_sin_iva=pedido.envio_sin_iva,
         total=pedido.total,
         moneda=pedido.moneda,
         line_count=len(pedido.lines),

@@ -6,6 +6,7 @@ import logging
 import os
 from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from fastapi_mail import MessageSchema, MessageType
 
@@ -43,7 +44,9 @@ def _format_eur(value: Decimal | float) -> str:
 def _format_datetime(dt: datetime | None) -> str:
     if dt is None:
         return ""
-    return dt.strftime("%d/%m/%Y %H:%M")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+    return dt.astimezone(ZoneInfo("Europe/Madrid")).strftime("%d/%m/%Y %H:%M")
 
 
 def _line_selections(line: CartLineItem) -> list[tuple[str, str]]:

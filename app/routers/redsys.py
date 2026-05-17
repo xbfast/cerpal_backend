@@ -9,6 +9,7 @@ from app.database import get_db
 from app.emails.order_confirmation import send_order_confirmation_email
 from app.models import Pedido
 from app.order_enums import EstadoPago
+from app.order_service import clear_user_cart
 from app.payments.redsys import response_is_paid, validate_notification_signature
 from app.routers.pedidos import _pedido_to_out
 
@@ -69,6 +70,8 @@ async def redsys_notification(
     pedido.redsys_authorization_code = auth_code or None
     pedido.redsys_payload = params
     pedido.estado_pago = EstadoPago.PAGADO if (was_paid or paid) else EstadoPago.FALLIDO
+    if paid and not was_paid:
+        clear_user_cart(db, pedido.auth_id)
     db.commit()
     db.refresh(pedido)
 

@@ -66,6 +66,12 @@ async def redsys_notification(
 
     was_paid = pedido.estado_pago == EstadoPago.PAGADO
     paid = response_is_paid(params)
+    logger.info(
+        "Notificación Redsys recibida (pedido=%s, respuesta=%s, pagado=%s).",
+        redsys_order,
+        response_code or "(sin código)",
+        paid,
+    )
     pedido.redsys_response_code = response_code or None
     pedido.redsys_authorization_code = auth_code or None
     pedido.redsys_payload = params

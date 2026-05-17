@@ -105,6 +105,25 @@ def listar_pedidos(
     return [_pedido_to_list_out(p) for p in rows]
 
 
+@router.get("/{pedido_id}", response_model=PedidoOut)
+def obtener_pedido(
+    pedido_id: str,
+    user: AuthAccount = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PedidoOut:
+    pedido = db.scalar(
+        select(Pedido)
+        .where(Pedido.id == pedido_id, Pedido.auth_id == user.id)
+        .options(selectinload(Pedido.lines))
+    )
+    if pedido is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pedido no encontrado.",
+        )
+    return _pedido_to_out(pedido)
+
+
 @router.post("", response_model=PedidoOut, status_code=status.HTTP_201_CREATED)
 def crear_pedido(
     payload: PedidoCreateIn,

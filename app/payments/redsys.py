@@ -119,6 +119,20 @@ def sign_merchant_parameters(secret_key: str, order: str, merchant_parameters: s
     return _b64_encode(digest)
 
 
+def _signature_bytes(raw: str) -> bytes:
+    return _b64_decode(raw.strip().replace(" ", "+"))
+
+
+def signature_matches(expected: str, received: str) -> bool:
+    try:
+        return hmac.compare_digest(
+            _signature_bytes(expected),
+            _signature_bytes(received),
+        )
+    except Exception:
+        return hmac.compare_digest(expected, received)
+
+
 def build_payment_form(
     *,
     order: str,
@@ -172,7 +186,7 @@ def validate_notification_signature(
             detail="Notificación Redsys sin pedido.",
         )
     expected = sign_merchant_parameters(cfg.secret_key, order, merchant_parameters)
-    if not hmac.compare_digest(expected, signature):
+    if not signature_matches(expected, signature):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Firma Redsys inválida.",

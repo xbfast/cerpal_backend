@@ -200,6 +200,10 @@ def solicitar_recuperacion_contrasena(
             logger.exception("No se pudo guardar el token de recuperación de contraseña.")
         else:
             display = (user.nombre_responsable or user.nombre_empresa or "").strip()
+            logger.info(
+                "Recuperación de contraseña: encolando correo a %s.",
+                user.email,
+            )
             background_tasks.add_task(
                 send_password_reset_email, user.email, display, plain
             )

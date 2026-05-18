@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
@@ -9,9 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import AuthAccount, Direccion
-from app.mail_diagnostics import mail_diagnostic_summary
 from app.password_reset import (
-    LOG as PASSWORD_RESET_LOG,
     generate_password_reset_secret,
     hash_password_reset_token,
     send_password_reset_email,
@@ -178,30 +176,20 @@ def _utc_naive_now() -> datetime:
 
 
 @router.post("/forgot-password")
-async def solicitar_recuperacion_contrasena(
+def solicitar_recuperacion_contrasena(
     payload: RecuperarContrasenaIn,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> dict:
     """
     Respuesta uniforme (no revela si el email existe).
-    Si hay cuenta, guarda token y envía SMTP con enlace al frontend.
+    Si hay cuenta, guarda token y encola envío SMTP con enlace al frontend.
     """
     email = str(payload.email).strip().lower()
-    logger.info(
-        "%s Petición POST /forgot-password | email solicitado=%s | SMTP al arranque: %s",
-        PASSWORD_RESET_LOG,
-        email,
-        mail_diagnostic_summary(),
-    )
     user = db.scalar(
         select(AuthAccount).where(func.lower(AuthAccount.email) == email)
     )
     if user is None:
-        logger.warning(
-            "%s No existe cuenta con ese email — no se envía correo "
-            "(la web igual muestra «Revisa tu correo»).",
-            PASSWORD_RESET_LOG,
-        )
         return {"ok": True}
     plain, token_hash, expires = generate_password_reset_secret()
     user.password_reset_token_hash = token_hash
@@ -210,26 +198,12 @@ async def solicitar_recuperacion_contrasena(
         db.commit()
     except DBAPIError:
         db.rollback()
-        logger.exception(
-            "%s Error al guardar token en base de datos.",
-            PASSWORD_RESET_LOG,
-        )
+        logger.exception("No se pudo guardar el token de recuperación de contraseña.")
         return {"ok": True}
     display = (user.nombre_responsable or user.nombre_empresa or "").strip()
-    logger.info(
-        "%s Cuenta encontrada (id=%s). Enviando correo a %s…",
-        PASSWORD_RESET_LOG,
-        user.id,
-        user.email,
+    background_tasks.add_task(
+        send_password_reset_email, user.email, display, plain
     )
-    sent = await send_password_reset_email(user.email, display, plain)
-    if not sent:
-        logger.error(
-            "%s El usuario %s no recibirá correo — revisar logs [CERPAL_MAIL] y "
-            "GET https://api.cerpal.es/health/mail",
-            PASSWORD_RESET_LOG,
-            user.email,
-        )
     return {"ok": True}
 
 

@@ -17,8 +17,6 @@ from fastapi_mail.msg import MailMsg
 
 logger = logging.getLogger(__name__)
 
-LOG = "[CERPAL_MAIL]"
-
 _fast_mail: FastMail | None = None
 _mail_config: ConnectionConfig | None = None
 
@@ -142,8 +140,8 @@ def init_mail() -> None:
         _fast_mail = None
         _mail_config = None
         logger.warning(
-            "%s SMTP desactivado: MAIL_SERVER vacío. Revisa el .env del servidor.",
-            LOG,
+            "Correo SMTP desactivado: MAIL_SERVER vacío. "
+            "Revisa `cerpal_backend/.env` en el servidor."
         )
         return
 
@@ -151,16 +149,10 @@ def init_mail() -> None:
     _fast_mail = FastMail(conf)
     ehlo = _resolve_ehlo_hostname(str(conf.MAIL_FROM))
     logger.info(
-        "%s SMTP listo | servidor=%s | puerto=%s | from=%s | user=%s | "
-        "STARTTLS=%s | SSL_TLS=%s | EHLO=%s",
-        LOG,
+        "Correo SMTP listo (servidor=%s, puerto=%s, EHLO=%s).",
         conf.MAIL_SERVER,
         conf.MAIL_PORT,
-        conf.MAIL_FROM,
-        conf.MAIL_USERNAME,
-        conf.MAIL_STARTTLS,
-        conf.MAIL_SSL_TLS,
-        ehlo or "(predeterminado)",
+        ehlo or "(predeterminado del sistema)",
     )
 
 
@@ -175,7 +167,7 @@ def is_mail_configured() -> bool:
 async def send_mail_message(message: MessageSchema) -> bool:
     conf = _mail_config
     if conf is None:
-        logger.error("%s Envío omitido: SMTP no configurado en este proceso.", LOG)
+        logger.warning("Envío de correo omitido: SMTP no configurado.")
         return False
     if conf.SUPPRESS_SEND:
         mime_msg = await _build_mime_message(conf, message)
@@ -185,26 +177,22 @@ async def send_mail_message(message: MessageSchema) -> bool:
         mime_msg = await _build_mime_message(conf, message)
         ehlo = _resolve_ehlo_hostname(str(conf.MAIL_FROM))
         logger.info(
-            "%s Conectando %s:%s (timeout %ss) → %s",
-            LOG,
+            "Conectando a SMTP %s:%s (timeout %ss)…",
             conf.MAIL_SERVER,
             conf.MAIL_PORT,
             conf.TIMEOUT,
-            message.recipients,
         )
         await _send_smtp(conf, mime_msg, ehlo)
         email_dispatched.send(mime_msg)
         logger.info(
-            "%s Enviado OK | asunto=%r | destinatarios=%s",
-            LOG,
+            "Correo enviado (asunto=%r, destinatarios=%s).",
             message.subject,
             message.recipients,
         )
         return True
     except Exception as e:
         logger.exception(
-            "%s Fallo SMTP | asunto=%r | destinatarios=%s | %s:%s | %s",
-            LOG,
+            "Fallo SMTP al enviar correo (asunto=%r, destinatarios=%s, servidor=%s:%s): %s",
             message.subject,
             message.recipients,
             conf.MAIL_SERVER,

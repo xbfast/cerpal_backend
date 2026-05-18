@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
@@ -176,14 +176,13 @@ def _utc_naive_now() -> datetime:
 
 
 @router.post("/forgot-password")
-def solicitar_recuperacion_contrasena(
+async def solicitar_recuperacion_contrasena(
     payload: RecuperarContrasenaIn,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> dict:
     """
     Respuesta uniforme (no revela si el email existe).
-    Si hay cuenta, guarda token y encola envío SMTP con enlace al frontend.
+    Si hay cuenta, guarda token y envía SMTP con enlace al frontend.
     """
     email = str(payload.email).strip().lower()
     user = db.scalar(
@@ -201,12 +200,10 @@ def solicitar_recuperacion_contrasena(
         else:
             display = (user.nombre_responsable or user.nombre_empresa or "").strip()
             logger.info(
-                "Recuperación de contraseña: encolando correo a %s.",
+                "Recuperación de contraseña: enviando correo a %s.",
                 user.email,
             )
-            background_tasks.add_task(
-                send_password_reset_email, user.email, display, plain
-            )
+            await send_password_reset_email(user.email, display, plain)
     return {"ok": True}
 
 

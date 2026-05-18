@@ -88,5 +88,7 @@ async def send_password_reset_email(
             subtype=MessageType.html,
         )
     )
-    if not ok:
+    if ok:
+        logger.info("Correo de recuperación enviado a %s.", to_email)
+    else:
         logger.error("No se pudo enviar el correo de recuperación a %s.", to_email)

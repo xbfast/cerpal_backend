@@ -19,6 +19,7 @@ from app.email_template import (
     public_frontend_base,
     render_cerpal_email,
 )
+from app.emails.notify_recipients import order_notify_recipients
 from app.mail import is_mail_configured, send_mail_message
 from app.order_enums import MetodoPago
 from app.order_schemas import PedidoOut
@@ -268,13 +269,6 @@ def build_order_confirmation_html(
     )
 
 
-def _order_notify_recipients() -> list[str]:
-    raw = os.getenv("MAIL_ORDER_NOTIFY", "").strip()
-    if not raw:
-        return []
-    return [e.strip().lower() for e in raw.split(",") if e.strip()]
-
-
 async def send_order_confirmation_email(
     to_email: str,
     recipient_name: str,
@@ -305,7 +299,7 @@ async def send_order_confirmation_email(
         )
 
     notify = [
-        addr for addr in _order_notify_recipients()
+        addr for addr in order_notify_recipients()
         if addr and addr != to_email.strip().lower()
     ]
     if notify:

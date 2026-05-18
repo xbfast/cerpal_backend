@@ -9,6 +9,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import AuthAccount, Direccion
+from app.emails.registration_notify import (
+    registration_notify_payload_from_account,
+    send_registration_notify_email,
+)
 from app.password_reset import (
     generate_password_reset_secret,
     hash_password_reset_token,
@@ -274,7 +278,11 @@ def iniciar_sesion(payload: LoginIn, db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-def registrar_cuenta(payload: RegistroCuentaIn, db: Session = Depends(get_db)) -> dict:
+def registrar_cuenta(
+    payload: RegistroCuentaIn,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
     cif_nif = payload.cif_nif.strip().upper()
     email = str(payload.email).strip().lower()
 
@@ -333,4 +341,8 @@ def registrar_cuenta(payload: RegistroCuentaIn, db: Session = Depends(get_db)) -
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registro guardado pero no se pudo leer de la base de datos.",
         )
+    background_tasks.add_task(
+        send_registration_notify_email,
+        registration_notify_payload_from_account(saved),
+    )
     return _respuesta_registro(saved)

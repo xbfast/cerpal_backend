@@ -69,7 +69,7 @@ def render_cerpal_email(
             <td style="padding: 0 28px 24px; border-top: 1px solid {_COLOR_BORDER};">
               <p style="margin: 16px 0 0; font-size: 13px; color: {_COLOR_CLARO};">
                 Este mensaje se ha enviado desde CERPAL. Si tienes dudas, escríbenos a
-                <a href="mailto:info@cerpal.es" style="color: {_COLOR_OSCURO};">info@cerpal.es</a>.
+                <a href="mailto:administracion@cerpal.es" style="color: {_COLOR_OSCURO};">administracion@cerpal.es</a>.
               </p>
               {footer}
             </td>

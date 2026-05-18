@@ -19,8 +19,11 @@ from app.email_template import (
     render_cerpal_email,
 )
 from app.mail import is_mail_configured, send_mail_message
+from app.mail_diagnostics import mail_diagnostic_summary
 
 logger = logging.getLogger(__name__)
+
+LOG = "[CERPAL_PASSWORD_RESET]"
 
 
 def hash_password_reset_token(plain: str) -> str:
@@ -70,15 +73,24 @@ def password_reset_email_html(recipient_name: str, reset_url: str) -> str:
 
 async def send_password_reset_email(
     to_email: str, recipient_display: str, plain_token: str
-) -> None:
+) -> bool:
+    diag = mail_diagnostic_summary()
+    logger.info(
+        "%s Inicio envío a %s | SMTP: %s",
+        LOG,
+        to_email,
+        diag,
+    )
     if not is_mail_configured():
-        logger.warning(
-            "Recuperación solicitada para %s pero SMTP no está configurado; "
-            "no se ha enviado el correo.",
-            to_email,
+        logger.error(
+            "%s ABORTADO: SMTP no configurado en este proceso (reinicia la API tras "
+            "cambiar .env). Detalle: %s",
+            LOG,
+            diag,
         )
-        return
+        return False
     reset_url = build_password_reset_url(plain_token)
+    logger.info("%s Enlace generado (host): %s", LOG, public_frontend_base())
     body = password_reset_email_html(recipient_display, reset_url)
     ok = await send_mail_message(
         MessageSchema(
@@ -89,6 +101,12 @@ async def send_password_reset_email(
         )
     )
     if ok:
-        logger.info("Correo de recuperación enviado a %s.", to_email)
+        logger.info("%s OK — correo enviado a %s.", LOG, to_email)
     else:
-        logger.error("No se pudo enviar el correo de recuperación a %s.", to_email)
+        logger.error(
+            "%s FALLO — SMTP rechazó o error de red al enviar a %s. "
+            "Busca líneas [CERPAL_MAIL] o 'Fallo SMTP' arriba en el log.",
+            LOG,
+            to_email,
+        )
+    return ok

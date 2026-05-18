@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import AuthAccount, Direccion
+from app.mail_diagnostics import mail_diagnostic_summary
 from app.password_reset import (
+    LOG as PASSWORD_RESET_LOG,
     generate_password_reset_secret,
     hash_password_reset_token,
     send_password_reset_email,
@@ -185,25 +187,49 @@ async def solicitar_recuperacion_contrasena(
     Si hay cuenta, guarda token y envía SMTP con enlace al frontend.
     """
     email = str(payload.email).strip().lower()
+    logger.info(
+        "%s Petición POST /forgot-password | email solicitado=%s | SMTP al arranque: %s",
+        PASSWORD_RESET_LOG,
+        email,
+        mail_diagnostic_summary(),
+    )
     user = db.scalar(
         select(AuthAccount).where(func.lower(AuthAccount.email) == email)
     )
-    if user is not None:
-        plain, token_hash, expires = generate_password_reset_secret()
-        user.password_reset_token_hash = token_hash
-        user.password_reset_expires_at = expires
-        try:
-            db.commit()
-        except DBAPIError:
-            db.rollback()
-            logger.exception("No se pudo guardar el token de recuperación de contraseña.")
-        else:
-            display = (user.nombre_responsable or user.nombre_empresa or "").strip()
-            logger.info(
-                "Recuperación de contraseña: enviando correo a %s.",
-                user.email,
-            )
-            await send_password_reset_email(user.email, display, plain)
+    if user is None:
+        logger.warning(
+            "%s No existe cuenta con ese email — no se envía correo "
+            "(la web igual muestra «Revisa tu correo»).",
+            PASSWORD_RESET_LOG,
+        )
+        return {"ok": True}
+    plain, token_hash, expires = generate_password_reset_secret()
+    user.password_reset_token_hash = token_hash
+    user.password_reset_expires_at = expires
+    try:
+        db.commit()
+    except DBAPIError:
+        db.rollback()
+        logger.exception(
+            "%s Error al guardar token en base de datos.",
+            PASSWORD_RESET_LOG,
+        )
+        return {"ok": True}
+    display = (user.nombre_responsable or user.nombre_empresa or "").strip()
+    logger.info(
+        "%s Cuenta encontrada (id=%s). Enviando correo a %s…",
+        PASSWORD_RESET_LOG,
+        user.id,
+        user.email,
+    )
+    sent = await send_password_reset_email(user.email, display, plain)
+    if not sent:
+        logger.error(
+            "%s El usuario %s no recibirá correo — revisar logs [CERPAL_MAIL] y "
+            "GET https://api.cerpal.es/health/mail",
+            PASSWORD_RESET_LOG,
+            user.email,
+        )
     return {"ok": True}
 
 

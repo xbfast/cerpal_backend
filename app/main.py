@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.database import engine, get_db
 from app.mail import init_mail
+from app.mail_diagnostics import mail_diagnostic_summary
 
 
 def _configure_logging() -> None:
@@ -77,6 +78,16 @@ def startup():
 def health(db: Session = Depends(get_db)):
     db.execute(text("SELECT 1"))
     return {"status": "ok", "db": "connected"}
+
+
+@app.get("/health/mail")
+def health_mail():
+    """
+    Diagnóstico SMTP (sin contraseñas). Útil en producción:
+    curl -s https://api.cerpal.es/health/mail | python3 -m json.tool
+    """
+    summary = mail_diagnostic_summary()
+    return {"status": "ok" if summary.get("configured") else "mail_disabled", **summary}
 
 
 @app.get("/")

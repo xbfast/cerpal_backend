@@ -1,8 +1,10 @@
 """
-Correo transaccional por SMTP (IONOS u otro proveedor).
+Correo transaccional: Brevo (API HTTPS) o SMTP (IONOS, Office 365, etc.).
 
-Variables en `cerpal_backend/.env` (ver `.env.example`).
-Sin `MAIL_SERVER` el correo queda desactivado y la API sigue funcionando.
+En VPS con SMTP bloqueado (p. ej. DigitalOcean), usa Brevo:
+  BREVO_API_KEY=...
+  MAIL_FROM=correo_verificado_en_brevo@tudominio.com
+  MAIL_FROM_NAME=CERPAL
 """
 
 from __future__ import annotations
@@ -12,15 +14,22 @@ import logging
 import os
 import smtplib
 import ssl
+from typing import Literal
 
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema
 from fastapi_mail.fastmail import email_dispatched
 from fastapi_mail.msg import MailMsg
 
+from app.mail_brevo import BrevoConfig, build_brevo_config, send_brevo_message
+
 logger = logging.getLogger(__name__)
+
+MailProvider = Literal["brevo", "smtp"]
 
 _fast_mail: FastMail | None = None
 _mail_config: ConnectionConfig | None = None
+_brevo_config: BrevoConfig | None = None
+_mail_provider: MailProvider | None = None
 
 
 def _env_bool(name: str, default: str = "false") -> bool:
@@ -28,11 +37,26 @@ def _env_bool(name: str, default: str = "false") -> bool:
 
 
 def _secret_value(value: object) -> str:
-    """fastapi-mail guarda MAIL_PASSWORD como SecretStr; smtplib exige str."""
     getter = getattr(value, "get_secret_value", None)
     if callable(getter):
         return str(getter())
     return str(value) if value is not None else ""
+
+
+def _resolve_mail_provider() -> MailProvider | None:
+    explicit = os.getenv("MAIL_PROVIDER", "").strip().lower()
+    has_brevo = bool(os.getenv("BREVO_API_KEY", "").strip())
+    has_smtp = bool(os.getenv("MAIL_SERVER", "").strip())
+
+    if explicit == "brevo":
+        return "brevo" if has_brevo else None
+    if explicit == "smtp":
+        return "smtp" if has_smtp else None
+    if has_brevo:
+        return "brevo"
+    if has_smtp:
+        return "smtp"
+    return None
 
 
 def _resolve_ehlo_hostname(mail_from: str) -> str | None:
@@ -53,9 +77,7 @@ def _format_sender(conf: ConnectionConfig) -> str:
     return str(conf.MAIL_FROM)
 
 
-async def _build_mime_message(
-    conf: ConnectionConfig, message: MessageSchema
-):
+async def _build_mime_message(conf: ConnectionConfig, message: MessageSchema):
     return await MailMsg(message)._message(_format_sender(conf))
 
 
@@ -68,7 +90,6 @@ def _smtp_ssl_context(validate_certs: bool) -> ssl.SSLContext:
 def _send_smtp_sync(
     conf: ConnectionConfig, mime_msg, local_hostname: str | None
 ) -> None:
-    """Envío SMTP con la librería estándar (smtplib)."""
     timeout = float(conf.TIMEOUT)
     host = conf.MAIL_SERVER
     port = int(conf.MAIL_PORT)
@@ -162,23 +183,44 @@ def build_connection_config() -> ConnectionConfig | None:
 
 
 def init_mail() -> None:
-    global _fast_mail, _mail_config
+    global _fast_mail, _mail_config, _brevo_config, _mail_provider
+
+    _fast_mail = None
+    _mail_config = None
+    _brevo_config = None
+    _mail_provider = _resolve_mail_provider()
+
+    if _mail_provider is None:
+        logger.warning(
+            "Correo desactivado: define BREVO_API_KEY (recomendado en DigitalOcean) "
+            "o MAIL_SERVER para SMTP."
+        )
+        return
+
+    if _mail_provider == "brevo":
+        _brevo_config = build_brevo_config()
+        if _brevo_config is None:
+            _mail_provider = None
+            logger.warning("Brevo no configurado correctamente (BREVO_API_KEY / MAIL_FROM).")
+            return
+        logger.info(
+            "Correo listo vía Brevo API (remitente=%s, nombre=%s).",
+            _brevo_config.mail_from,
+            _brevo_config.mail_from_name or "(sin nombre)",
+        )
+        return
 
     conf = build_connection_config()
     if conf is None:
-        _fast_mail = None
-        _mail_config = None
-        logger.warning(
-            "Correo SMTP desactivado: MAIL_SERVER vacío. "
-            "Revisa `cerpal_backend/.env` en el servidor."
-        )
+        _mail_provider = None
+        logger.warning("SMTP no configurado correctamente.")
         return
 
     _mail_config = conf
     _fast_mail = FastMail(conf)
     ehlo = _resolve_ehlo_hostname(str(conf.MAIL_FROM))
     logger.info(
-        "Correo SMTP listo (servidor=%s, puerto=%s, EHLO=%s).",
+        "Correo listo vía SMTP (servidor=%s, puerto=%s, EHLO=%s).",
         conf.MAIL_SERVER,
         conf.MAIL_PORT,
         ehlo or "(predeterminado del sistema)",
@@ -190,10 +232,42 @@ def get_fast_mail() -> FastMail | None:
 
 
 def is_mail_configured() -> bool:
-    return _fast_mail is not None
+    return _mail_provider is not None
+
+
+def get_mail_provider() -> MailProvider | None:
+    return _mail_provider
 
 
 async def send_mail_message(message: MessageSchema) -> bool:
+    if _mail_provider is None:
+        logger.warning("Envío de correo omitido: correo no configurado.")
+        return False
+
+    if _mail_provider == "brevo":
+        assert _brevo_config is not None
+        try:
+            await send_brevo_message(
+                _brevo_config,
+                subject=message.subject,
+                recipients=message.recipients,
+                html_body=message.body,
+            )
+            logger.info(
+                "Correo enviado (Brevo, asunto=%r, destinatarios=%s).",
+                message.subject,
+                message.recipients,
+            )
+            return True
+        except Exception as e:
+            logger.exception(
+                "Fallo Brevo al enviar correo (asunto=%r, destinatarios=%s): %s",
+                message.subject,
+                message.recipients,
+                e,
+            )
+            return False
+
     conf = _mail_config
     if conf is None:
         logger.warning("Envío de correo omitido: SMTP no configurado.")
@@ -214,7 +288,7 @@ async def send_mail_message(message: MessageSchema) -> bool:
         await _send_smtp(conf, mime_msg, ehlo)
         email_dispatched.send(mime_msg)
         logger.info(
-            "Correo enviado (asunto=%r, destinatarios=%s).",
+            "Correo enviado (SMTP, asunto=%r, destinatarios=%s).",
             message.subject,
             message.recipients,
         )

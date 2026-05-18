@@ -25,6 +25,14 @@ def _env_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _secret_value(value: object) -> str:
+    """fastapi-mail guarda MAIL_PASSWORD como SecretStr; aiosmtplib exige str."""
+    getter = getattr(value, "get_secret_value", None)
+    if callable(getter):
+        return str(getter())
+    return str(value) if value is not None else ""
+
+
 def _resolve_ehlo_hostname(mail_from: str) -> str | None:
     if "MAIL_EHLO_HOSTNAME" in os.environ:
         v = os.environ["MAIL_EHLO_HOSTNAME"].strip()
@@ -62,7 +70,10 @@ async def _send_smtp(conf: ConnectionConfig, mime_msg, local_hostname: str | Non
     await smtp.connect()
     try:
         if conf.USE_CREDENTIALS:
-            await smtp.login(conf.MAIL_USERNAME, conf.MAIL_PASSWORD)
+            await smtp.login(
+                _secret_value(conf.MAIL_USERNAME),
+                _secret_value(conf.MAIL_PASSWORD),
+            )
         await smtp.send_message(mime_msg)
     finally:
         await smtp.quit()

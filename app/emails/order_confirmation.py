@@ -135,6 +135,7 @@ def _transfer_block_html(pedido: PedidoOut) -> str:
     iban = os.getenv("BANK_TRANSFER_IBAN", "").strip()
     beneficiary = os.getenv("BANK_TRANSFER_BENEFICIARY", "").strip()
     bank_name = os.getenv("BANK_TRANSFER_BANK_NAME", "").strip()
+    swift = os.getenv("BANK_TRANSFER_SWIFT", "").strip()
     ticket = pedido.ticket_number
     referencia = (pedido.referencia_pedido_cliente or "").strip()
     concept_parts = [ticket]
@@ -162,6 +163,11 @@ def _transfer_block_html(pedido: PedidoOut) -> str:
         lines.append(
             f'<p style="margin: 4px 0 0; font-size: 13px; color: #166534;">IBAN: '
             f'<span style="font-family: monospace;">{esc(iban)}</span></p>'
+        )
+    if swift:
+        lines.append(
+            f'<p style="margin: 4px 0 0; font-size: 13px; color: #166534;">SWIFT/BIC: '
+            f'<span style="font-family: monospace;">{esc(swift)}</span></p>'
         )
     if not iban:
         lines.append(
@@ -283,16 +289,10 @@ async def send_order_confirmation_email(
 
     subject = f"Pedido {pedido.ticket_number} — CERPAL"
     body = build_order_confirmation_html(pedido, recipient_name)
-    recipients = [to_email.strip().lower()]
-    notify = _order_notify_recipients()
-    for addr in notify:
-        if addr and addr not in recipients:
-            recipients.append(addr)
-
     ok = await send_mail_message(
         MessageSchema(
             subject=subject,
-            recipients=recipients,
+            recipients=[to_email.strip().lower()],
             body=body,
             subtype=MessageType.html,
         )
@@ -302,4 +302,18 @@ async def send_order_confirmation_email(
             "No se pudo enviar la copia del pedido %s a %s.",
             pedido.ticket_number,
             to_email,
+        )
+
+    notify = [
+        addr for addr in _order_notify_recipients()
+        if addr and addr != to_email.strip().lower()
+    ]
+    if notify:
+        await send_mail_message(
+            MessageSchema(
+                subject=f"Copia interna — {subject}",
+                recipients=notify,
+                body=body,
+                subtype=MessageType.html,
+            )
         )

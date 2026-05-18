@@ -7,10 +7,12 @@ Sin `MAIL_SERVER` el correo queda desactivado y la API sigue funcionando.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import smtplib
+import ssl
 
-import aiosmtplib
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema
 from fastapi_mail.fastmail import email_dispatched
 from fastapi_mail.msg import MailMsg
@@ -26,7 +28,7 @@ def _env_bool(name: str, default: str = "false") -> bool:
 
 
 def _secret_value(value: object) -> str:
-    """fastapi-mail guarda MAIL_PASSWORD como SecretStr; aiosmtplib exige str."""
+    """fastapi-mail guarda MAIL_PASSWORD como SecretStr; smtplib exige str."""
     getter = getattr(value, "get_secret_value", None)
     if callable(getter):
         return str(getter())
@@ -57,26 +59,53 @@ async def _build_mime_message(
     return await MailMsg(message)._message(_format_sender(conf))
 
 
-async def _send_smtp(conf: ConnectionConfig, mime_msg, local_hostname: str | None) -> None:
-    smtp = aiosmtplib.SMTP(
-        hostname=conf.MAIL_SERVER,
-        port=conf.MAIL_PORT,
-        use_tls=conf.MAIL_SSL_TLS,
-        start_tls=conf.MAIL_STARTTLS,
-        validate_certs=conf.VALIDATE_CERTS,
-        timeout=float(conf.TIMEOUT),
+def _smtp_ssl_context(validate_certs: bool) -> ssl.SSLContext:
+    if validate_certs:
+        return ssl.create_default_context()
+    return ssl._create_unverified_context()
+
+
+def _send_smtp_sync(
+    conf: ConnectionConfig, mime_msg, local_hostname: str | None
+) -> None:
+    """Envío SMTP con la librería estándar (smtplib)."""
+    timeout = float(conf.TIMEOUT)
+    host = conf.MAIL_SERVER
+    port = int(conf.MAIL_PORT)
+    username = _secret_value(conf.MAIL_USERNAME)
+    password = _secret_value(conf.MAIL_PASSWORD)
+    ssl_context = _smtp_ssl_context(conf.VALIDATE_CERTS)
+
+    if conf.MAIL_SSL_TLS:
+        with smtplib.SMTP_SSL(
+            host,
+            port,
+            timeout=timeout,
+            local_hostname=local_hostname,
+            context=ssl_context,
+        ) as smtp:
+            if conf.USE_CREDENTIALS:
+                smtp.login(username, password)
+            smtp.send_message(mime_msg)
+        return
+
+    with smtplib.SMTP(
+        host,
+        port,
+        timeout=timeout,
         local_hostname=local_hostname,
-    )
-    await smtp.connect()
-    try:
+    ) as smtp:
+        if conf.MAIL_STARTTLS:
+            smtp.starttls(context=ssl_context)
         if conf.USE_CREDENTIALS:
-            await smtp.login(
-                _secret_value(conf.MAIL_USERNAME),
-                _secret_value(conf.MAIL_PASSWORD),
-            )
-        await smtp.send_message(mime_msg)
-    finally:
-        await smtp.quit()
+            smtp.login(username, password)
+        smtp.send_message(mime_msg)
+
+
+async def _send_smtp(
+    conf: ConnectionConfig, mime_msg, local_hostname: str | None
+) -> None:
+    await asyncio.to_thread(_send_smtp_sync, conf, mime_msg, local_hostname)
 
 
 def build_connection_config() -> ConnectionConfig | None:
